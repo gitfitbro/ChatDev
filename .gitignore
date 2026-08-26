@@ -28,3 +28,7 @@ data/
 temp/
 WareHouse/
 
+
+# Local crew-extension scratch (contains live fleet handles and paths)
+dispatch_plan.txt
+decision.txt

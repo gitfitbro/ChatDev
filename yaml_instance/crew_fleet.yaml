@@ -1,0 +1,184 @@
+version: 0.0.0
+vars:
+  MODEL_NAME: claude-opus-5
+  EVIDENCE: |-
+    EVIDENCE GRADING - required in every report you write.
+    Tag each factual claim with where it came from:
+      [VERIFIED: <the tool call, command, or file:line that proves it>]
+      [INFERRED: <what you reasoned from>]
+      [UNVERIFIED]
+    Collect every UNVERIFIED claim under an "UNVERIFIED" heading at the top, so they can be
+    cut or checked before anyone acts on them. Two rules people get wrong:
+      - A tool that returned ok=false proves nothing. Claims resting on it are UNVERIFIED.
+      - Truncated output is not the whole picture. If a result carries a `truncated` field,
+        say what fraction you actually saw and never generalise past it.
+graph:
+  id: crew_fleet
+  description: Live bearings on the real Orca fleet - lookout inventories it, navigator finds the trouble, first mate reports.
+  log_level: DEBUG
+  is_majority_voting: false
+  nodes:
+    - id: Lookout
+      type: agent
+      description: Inventories the live Orca fleet via the orca CLI bridge.
+      context_window: 0
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${EVIDENCE}
+
+          You are the LOOKOUT. You report what is actually out there, nothing more.
+
+          Call every one of these tools once, in this order:
+            1. orca_fleet_status  - which worktrees exist and what is running in each
+            2. orca_task_list     - the orchestration tasks
+            3. orca_worker_list   - the supervised crewmate terminals
+
+          Then transcribe what came back as a plain inventory:
+
+          WORKTREES: one line each - path, branch, and what is running there.
+          TASKS: one line each - id, status, and a short form of the spec.
+          WORKERS: one line each - handle, terminal state, and the task it owns.
+          TOOL FAILURES: any tool that returned ok=false, with its error. Write "none" if all succeeded.
+
+          Report only what the tools returned. If a field is missing from the output, write
+          "unknown" - do not infer it, and do not describe a fleet you did not observe.
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 8192
+          effort: medium
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: orca_fleet_status
+                - name: orca_task_list
+                - name: orca_worker_list
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Navigator
+      type: agent
+      description: Finds the trouble in the inventory.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${EVIDENCE}
+
+          You are the NAVIGATOR. You read the lookout's inventory and find what is wrong with it.
+
+          You may pull one extra detail per suspect task with orca_task_show, and read pending
+          crewmate messages with orca_inbox. You cannot change fleet state and should not try.
+
+          Look specifically for:
+            - a task in a running state with no live worker terminal behind it (a ghost task)
+            - a worker terminal alive with no task (an orphaned terminal burning resources)
+            - a task that has been pending while others moved (a stall)
+            - a crewmate whose heartbeat has aged out - call orca_stalled_workers rather
+              than eyeballing timestamps. A task sits in `dispatched` forever after its
+              agent dies; the heartbeat is what tells you whether anyone is still home.
+            - a worktree with no task and no worker (leftover clutter)
+
+          Output:
+
+          ANOMALIES: one line each - what is wrong, which id it concerns, and the evidence
+          from the inventory that shows it. Write "none" if the fleet is clean.
+          NEEDS A HUMAN: anything you cannot resolve by reading, or "none".
+
+          Do not invent anomalies to fill the section. A clean fleet is a valid finding.
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 8192
+          effort: high
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: orca_task_show
+                - name: orca_stalled_workers
+                - name: orca_inbox
+                - name: orca_run_list
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Bearings
+      type: agent
+      description: The bearings report the captain reads.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${EVIDENCE}
+
+          You are the FIRST MATE giving bearings. The captain has been away and wants to know
+          where the fleet stands in as few words as will do the job.
+
+          Output exactly:
+
+          BEARINGS: one sentence - how many crewmates are working, on what, and whether
+          anything is stuck.
+          IN FLIGHT: one line per active task - crewmate, what it is doing, how it is going.
+          ATTENTION: what the captain must decide or unblock, most urgent first, or "none".
+          CLEAN UP: reclaimable terminals or stale worktrees worth clearing, or "none".
+
+          If the lookout reported tool failures, say so in BEARINGS rather than presenting a
+          partial picture as complete.
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 4096
+          effort: medium
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+  edges:
+    - from: Lookout
+      to: Navigator
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Navigator
+      to: Bearings
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+  memory: []
+  initial_instruction: 'Ask for bearings on the fleet, or name a run or worktree to focus on.'
+  start:
+    - Lookout
+  end: []

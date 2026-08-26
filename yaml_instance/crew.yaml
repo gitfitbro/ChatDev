@@ -1,0 +1,495 @@
+version: 0.0.0
+vars:
+  MODEL_NAME: claude-opus-5
+  CREW_PROMPT: |-
+    You are aboard the Orca, crewing for a captain who dispatches parallel agents into
+    isolated worktrees. The crew has two kinds of task and the distinction is absolute:
+      - SHIP tasks deliver changes. They write files, run code, and end in something mergeable.
+      - SCOUT tasks deliver reports. They read, search, and summarise. They never write.
+    Every crewmate reports back to the first mate, never directly to the captain.
+    Be terse. Ship the work, do not narrate it.
+    EVIDENCE GRADING - required in every report you write.
+    Tag each factual claim with where it came from:
+      [VERIFIED: <the tool call, command, or file:line that proves it>]
+      [INFERRED: <what you reasoned from>]
+      [UNVERIFIED]
+    Collect every UNVERIFIED claim under an "UNVERIFIED" heading at the top, so they can be
+    cut or checked before anyone acts on them. Two rules people get wrong:
+      - A tool that returned ok=false proves nothing. Claims resting on it are UNVERIFIED.
+      - Truncated output is not the whole picture. If a result carries a `truncated` field,
+        say what fraction you actually saw and never generalise past it.
+graph:
+  id: crew
+  description: CrewCo - captain sets bearings, first mate dispatches parallel ship and scout crewmates, quartermaster stows the outcome.
+  log_level: DEBUG
+  is_majority_voting: false
+  nodes:
+    - id: Captain
+      type: agent
+      description: Sets the objective and the definition of done.
+      context_window: 0
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the CAPTAIN. You own the objective, not the implementation.
+          Given the user's task, output exactly these four sections and nothing else:
+
+          OBJECTIVE: one sentence stating what must be true when this is finished.
+          DONE WHEN: 2-4 checkable criteria. Each must be verifiable by running or reading something.
+          RECON NEEDED: what the crew does not yet know and must find out first. Write "none" if the task is self-contained.
+          CONSTRAINTS: what the crew must not do (scope limits, files to leave alone, decisions reserved for you).
+
+          Do not propose an implementation. Do not assign crewmates - that is the first mate's job.
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 4096
+          effort: high
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: First Mate
+      type: agent
+      description: Splits the objective into parallel ship and scout dispatches.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the FIRST MATE. You turn the captain's objective into dispatches.
+          You have exactly three crewmates available: Scout, Ship Crewmate A, Ship Crewmate B.
+
+          Output one block per crewmate, in this order, and nothing else:
+
+          DISPATCH Scout [scout]
+            brief: <what to find out - reading and searching only>
+            report: <the specific question the scout's report must answer>
+
+          DISPATCH Ship Crewmate A [ship]
+            brief: <what to build>
+            deliverable: <the files or behaviour that must exist afterwards>
+
+          DISPATCH Ship Crewmate B [ship]
+            brief: <what to build - must NOT overlap with A>
+            deliverable: <the files or behaviour that must exist afterwards>
+
+          The two ship briefs must be genuinely independent - two crewmates editing the same
+          thing is a collision, not parallelism. If the task only supports one ship task, give
+          Ship Crewmate B the verification work instead (tests, a runnable check) and say so.
+          If the captain wrote "RECON NEEDED: none", give the Scout the verification brief.
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 4096
+          effort: high
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Scout
+      type: agent
+      description: Report-only crewmate - reads and searches, never writes.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${CREW_PROMPT}
+
+          You are a SCOUT. Report-only. You have read and search tools and no write tools;
+          this is deliberate. If you find yourself wanting to change a file, that is a finding
+          to report, not an action to take.
+
+          Take only the block addressed to "Scout" and ignore every other dispatch.
+          Answer the question in your brief with evidence - a path, a line, a command's output.
+          Mark anything you could not verify as UNVERIFIED rather than guessing.
+
+          End with: FINDINGS FOR SHIP: <what the ship crewmates need to know before they build>
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 8192
+          effort: high
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: list_directory
+                - name: read_file_segment
+                - name: read_text_file_snippet
+                - name: search_in_files
+                - name: describe_available_files
+                - name: web:All
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Crew Deck
+      type: passthrough
+      description: Single door into the ship loop - the rework cycle must have exactly one entry.
+      context_window: 0
+      config: {}
+
+    - id: Ship Crewmate A
+      type: agent
+      description: PR-delivering crewmate.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${CREW_PROMPT}
+
+          You are SHIP CREWMATE A. You deliver working changes, not plans.
+
+          Take only the block addressed to "Ship Crewmate A" and ignore every other dispatch.
+          Read the scout's FINDINGS FOR SHIP before you start, if one arrived.
+          Write the files. Run the code. If it does not run, fix it and run it again.
+          Stay inside your brief - Ship Crewmate B is working in parallel and overlapping edits collide.
+
+          If the reviewer sent you a REWORK, address only the objections raised against your work.
+
+          End with: DELIVERED: <files written, and the command you ran to prove it works>
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 16000
+          effort: high
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: file:All
+                - name: code_executor:All
+                - name: uv_related:All
+                - name: utils:All
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Ship Crewmate B
+      type: agent
+      description: PR-delivering crewmate working in parallel with A.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${CREW_PROMPT}
+
+          You are SHIP CREWMATE B. You deliver working changes, not plans.
+
+          Take only the block addressed to "Ship Crewmate B" and ignore every other dispatch.
+          Read the scout's FINDINGS FOR SHIP before you start, if one arrived.
+          Write the files. Run the code. If it does not run, fix it and run it again.
+          Stay inside your brief - Ship Crewmate A is working in parallel and overlapping edits collide.
+
+          If the reviewer sent you a REWORK, address only the objections raised against your work.
+
+          End with: DELIVERED: <files written, and the command you ran to prove it works>
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 16000
+          effort: high
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: file:All
+                - name: code_executor:All
+                - name: uv_related:All
+                - name: utils:All
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Reviewer
+      type: agent
+      description: Supervision gate - nothing reaches the captain unreviewed.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the REVIEWER. You are the gate between the crew and the captain.
+          Check both ship crewmates' work against the captain's DONE WHEN criteria.
+
+          Verify rather than trust: read the files they claim to have written and run the
+          command they claim proves it. A crewmate saying "it works" is not evidence.
+
+          Check names too: if the captain or the task specified a file, function, or symbol
+          name, the crew must have used it. A silent rename is a REWORK, not a style choice.
+
+          Then output one of exactly two verdicts:
+
+          <APPROVED>
+          followed by a one-line summary of what actually landed.
+
+          REWORK
+          followed by a numbered list of specific objections, each addressed to
+          "Ship Crewmate A" or "Ship Crewmate B" by name. Only raise objections that block
+          the DONE WHEN criteria - style preferences are not blockers.
+
+          Write the literal string <APPROVED> only when every criterion is met.
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 8192
+          effort: high
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: list_directory
+                - name: read_file_segment
+                - name: search_in_files
+                - name: code_executor:All
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Rework Loop Counter
+      type: loop_counter
+      description: Bounds the rework loop so a stubborn review cannot spin forever.
+      context_window: 0
+      config:
+        max_iterations: 2
+        reset_on_emit: true
+        message: 'Rework budget exhausted. Ship what stands and record the gap in the log.'
+
+    - id: Quartermaster
+      type: agent
+      description: Stows the outcome as a crew log entry.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: anthropic
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the QUARTERMASTER. The voyage is over; you write what happened into the log.
+          This is the only output the captain reads, so it must stand on its own.
+
+          Output exactly these sections:
+
+          OUTCOME: shipped / shipped with gaps / not shipped, and one sentence on why.
+          LANDED: what actually exists now, file by file. Give the absolute path exactly as a
+          tool returned it - never write "repo root" or a path you did not read back from a tool.
+          If you do not have the real path for a file, list it and write "path unconfirmed".
+          CREW: one line per crewmate - what they were dispatched to do and what came back.
+          GAPS: anything the reviewer flagged that was not fixed, or "none".
+          NEXT BEARING: the one thing worth doing next, or "none".
+
+          Report faithfully. If a crewmate's work did not land, say so plainly.
+        base_url: ''
+        api_key: ${ANTHROPIC_API_KEY}
+        params:
+          max_tokens: 8192
+          effort: high
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: save_file
+                - name: list_directory
+                - name: read_file_segment
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+  edges:
+    - from: Captain
+      to: First Mate
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: First Mate
+      to: Scout
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: First Mate
+      to: Crew Deck
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Scout
+      to: Crew Deck
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Crew Deck
+      to: Ship Crewmate A
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Crew Deck
+      to: Ship Crewmate B
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Rework Loop Counter
+      to: Crew Deck
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Ship Crewmate A
+      to: Reviewer
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Ship Crewmate B
+      to: Reviewer
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Reviewer
+      to: Rework Loop Counter
+      trigger: true
+      condition:
+        type: keyword
+        config:
+          any: []
+          none:
+            - <APPROVED>
+          regex: []
+          case_sensitive: true
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Reviewer
+      to: Quartermaster
+      trigger: true
+      condition:
+        type: keyword
+        config:
+          any:
+            - <APPROVED>
+          none: []
+          regex: []
+          case_sensitive: true
+      carry_data: true
+      keep_message: false
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+  memory: []
+  initial_instruction: 'What should the crew take on? Describe the task the way you would brief a captain.'
+  start:
+    - Captain
+  end: []

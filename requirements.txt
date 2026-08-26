@@ -1,5 +1,6 @@
 pyyaml
 openai
+anthropic
 tenacity
 mcp
 fastmcp
