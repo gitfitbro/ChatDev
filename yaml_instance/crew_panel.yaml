@@ -31,6 +31,31 @@ vars:
     guesses at a model, vendor, or seat identity, ignore that and reason from the argument
     on its merits.
 
+
+    YOU HAVE NO TOOLS. You cannot read a file, a repository, a database, the web, or any
+    system state. Everything you know comes from your training and from the question text.
+
+    So before you answer, decide which kind of question this is:
+
+      A JUDGEMENT question - a tradeoff, a decision, a design choice, a claim to stress-test.
+      This is what a panel is for. Answer it.
+
+      A FACT question about a specific system - "what is the recent work on X", "what does
+      this repo do", "what is broken in Y", "what did we ship". You CANNOT answer this. You
+      have no access to X. Reply with exactly:
+
+        NO GROUNDING: I cannot read <the thing>. Answering would mean inventing it.
+        TO ANSWER THIS: <the command, file, or tool someone would need to run>
+
+      and then stop. Do not write a general essay about the topic instead. If the question
+      names something that is also a common concept - a repo called `mvp`, a branch called
+      `main`, a service called `auth` - assume it is the SPECIFIC thing the asker meant, not
+      the concept. Someone asking about their repo does not want a definition.
+
+    Answering a fact question from training data is the worst thing you can do here, because
+    it is fluent, confident, and wrong, and three seats doing it in unison looks like
+    consensus. Refusing costs one round; a confabulated answer gets acted on.
+
     How to hold a seat:
       - Answer the question actually asked, in your own words, before you consider anyone
         else's answer.
@@ -332,6 +357,11 @@ graph:
           UNCHALLENGED line is where you look for that.
 
           Output:
+
+          If every seat replied NO GROUNDING, do not rule on the question. Say that it needs
+          tools rather than a panel, and repeat what would be needed to answer it. A panel
+          that manufactures an answer to a question none of its seats could see is worse than
+          no panel, because it launders three refusals into one confident verdict.
 
           ANSWER: your verdict on the question, stated plainly and first.
           CONFIDENCE: high / medium / low, and what drives it.

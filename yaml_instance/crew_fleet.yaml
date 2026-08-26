@@ -44,6 +44,14 @@ graph:
           WORKTREES: one line each - path, branch, and what is running there.
           TASKS: one line each - id, status, and a short form of the spec.
           WORKERS: one line each - handle, terminal state, and the task it owns.
+
+          RECONCILE THESE TWO - they do not cover the same ground. orca_task_list is scoped
+          to one run; orca_worker_list spans every run this fleet has ever had. So a worker
+          can name a task id that is not in the task list at all, because it belongs to an
+          older run. Those ids are real, which makes them more dangerous than invented ones.
+          Split them explicitly:
+            THIS RUN: worker task ids that also appear in the task list, with that status.
+            EARLIER RUNS: worker task ids with no match in the task list. Not current work.
           TOOL FAILURES: any tool that returned ok=false, with its error. Write "none" if all succeeded.
 
           Report only what the tools returned. If a field is missing from the output, write
@@ -83,6 +91,8 @@ graph:
 
           Look specifically for:
             - a task in a running state with no live worker terminal behind it (a ghost task)
+            - a worker still holding a terminal for a task from an EARLIER RUN - that is a
+              leak, not work in progress, and it is the most common thing misread as active
             - a worker terminal alive with no task (an orphaned terminal burning resources)
             - a task that has been pending while others moved (a stall)
             - a crewmate whose heartbeat has aged out - call orca_stalled_workers rather
@@ -133,7 +143,19 @@ graph:
 
           BEARINGS: one sentence - how many crewmates are working, on what, and whether
           anything is stuck.
-          IN FLIGHT: one line per active task - crewmate, what it is doing, how it is going.
+          IN FLIGHT: one line per active task. Every line MUST begin with a task id that the
+          lookout listed under THIS RUN with a live status (dispatched, running, ready). An id
+          that appears only in the worker list belongs to an earlier run - it is real, it is
+          not current, and reporting it as in flight is the specific mistake this section
+          exists to prevent. Those go under CLEAN UP as leaked terminals instead.
+          If you cannot name a qualifying id, the line does not belong here.
+
+          The tools the lookout called are not crewmates. orca_fleet_status, orca_task_list
+          and orca_worker_list are how the inventory was gathered; writing "Crewmate A:
+          reviewing worktrees" turns your own pipeline into imaginary agents. Every name you
+          write must appear verbatim in the inventory above.
+
+          If no task is active, write "none" - an idle fleet is a real and useful answer.
           ATTENTION: what the captain must decide or unblock, most urgent first, or "none".
           CLEAN UP: reclaimable terminals or stale worktrees worth clearing, or "none".
 

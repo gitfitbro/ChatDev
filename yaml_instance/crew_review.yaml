@@ -19,6 +19,27 @@ vars:
     2. PIN YOUR EVIDENCE. Every finding cites file:line or the exact command and its
        output. A finding you cannot point at is a suspicion - label it as one or drop it.
 
+
+    HOW TO READ THE CODE - this is not optional and it is not obvious.
+
+    The file tools (read_file_segment, search_in_files, list_directory) are scoped to this
+    run's own scratch workspace. Against a repository somewhere else on disk they return
+    EMPTY rather than an error, which reads exactly like "the file is not there". It is
+    there; you are looking in the wrong place.
+
+    Read the code under review through the code executor, against the absolute repository
+    path you were given:
+      sed -n '1,200p' <repo>/path/to/file
+      git -C <repo> show <sha>:path/to/file
+      git -C <repo> diff <base>..<sha> -- path/to/file
+      grep -rn 'pattern' <repo>/dir
+
+    NEVER CITE A FILE YOU DID NOT OPEN. If a read comes back empty, that is a signal you
+    used the wrong tool - retry through the executor. If you still cannot read it, the
+    finding does not exist: put it under COULD NOT CHECK and cite nothing. A fabricated
+    file:line is worse than silence, because the whole point of a citation is that someone
+    downstream can trust it without re-checking.
+
     Severity, used consistently:
       BLOCKER  - ships a defect, a security hole, or a false public claim
       MAJOR    - will cause real pain but does not block the merge
@@ -78,7 +99,6 @@ graph:
               tools:
                 - name: code_executor:All
                 - name: list_directory
-                - name: read_file_segment
               timeout: null
             prefix: ''
         thinking: null
@@ -131,10 +151,6 @@ graph:
             config:
               tools:
                 - name: code_executor:All
-                - name: read_file_segment
-                - name: read_text_file_snippet
-                - name: search_in_files
-                - name: list_directory
               timeout: null
             prefix: ''
         thinking: null
@@ -185,10 +201,6 @@ graph:
           - type: function
             config:
               tools:
-                - name: read_file_segment
-                - name: read_text_file_snippet
-                - name: search_in_files
-                - name: list_directory
                 - name: code_executor:All
               timeout: null
             prefix: ''
@@ -244,10 +256,6 @@ graph:
           - type: function
             config:
               tools:
-                - name: read_file_segment
-                - name: read_text_file_snippet
-                - name: search_in_files
-                - name: list_directory
                 - name: code_executor:All
               timeout: null
             prefix: ''
@@ -299,7 +307,9 @@ graph:
           VERDICT: APPROVE or REQUEST CHANGES. Request changes if any BLOCKER survives
           citation checking. If you have no pinned SHA from the record, you cannot issue a
           verdict at all - say so and stop, because a verdict that cannot be attached to a
-          revision is worse than none.
+          revision is worse than none. The record node put a PINNED SHA line in your input;
+          find it and quote it. Writing "not provided" while it sits in your input is the
+          failure this rule exists to prevent.
           PINNED SHA: the sha reviewed, so this verdict cannot be attached to other code.
           BLOCKERS: numbered, each with file:line, what breaks, and which reviewers found it.
           MAJOR / MINOR: same form, briefer.
@@ -321,8 +331,7 @@ graph:
           - type: function
             config:
               tools:
-                - name: read_file_segment
-                - name: search_in_files
+                - name: code_executor:All
               timeout: null
             prefix: ''
         thinking: null
