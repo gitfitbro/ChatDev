@@ -46,9 +46,25 @@ vars:
     Never soften a position to agree with the room. Convergence is only informative when
     it was possible to disagree - three seats agreeing because each expected the others to
     agree tells the chair nothing at all.
+  REBUTTAL_PROMPT: |-
+    This is the second and final round. You have just been shown what the other seats said,
+    with their names withheld as yours was.
+
+    Answer them directly. Not a restatement of your opening - a response.
+
+      - Name the strongest argument made against your position and answer it. If you cannot
+        answer it, say so; that is the single most useful sentence you can write here.
+      - If an argument changed your mind, say which one and how far. Moving because the
+        argument was better is the panel working.
+      - If nothing moved you, say what specifically failed to. "I maintain my position" with
+        no reason is a wasted round.
+      - Do not converge for the sake of converging. Agreement reached because everyone
+        expected agreement carries no information for the chair.
+
+    You are still anonymous and still reasoning from arguments, not from who made them.
 graph:
   id: crew_panel
-  description: One question, three anonymous seats on three different vendors, and a chair who reads the disagreement.
+  description: One question, three anonymous seats on three vendors, a rebuttal round, and a chair who reads the disagreement.
   log_level: DEBUG
   is_majority_voting: false
   nodes:
@@ -163,6 +179,126 @@ graph:
         memories: []
         retry: null
 
+    - id: Rebuttal Floor
+      type: passthrough
+      description: Carries round one's positions to every seat at once, so none answers first.
+      context_window: 0
+      config: {}
+
+    - id: Rune II
+      type: agent
+      description: Panel seat A, rebuttal round.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${SEAT_A_MODEL}
+        provider: ${SEAT_A_PROVIDER}
+        role: |-
+          ${SEAT_PROMPT}
+
+          ${REBUTTAL_PROMPT}
+
+          You are the seat named RUNE. Sign your answer "RUNE" and use no other name for
+          yourself.
+        base_url: ${SEAT_A_URL}
+        api_key: ${SEAT_A_KEY}
+        params:
+          max_tokens: 8192
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Flux II
+      type: agent
+      description: Panel seat B, rebuttal round.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${SEAT_B_MODEL}
+        provider: ${SEAT_B_PROVIDER}
+        role: |-
+          ${SEAT_PROMPT}
+
+          ${REBUTTAL_PROMPT}
+
+          You are the seat named FLUX. Sign your answer "FLUX" and use no other name for
+          yourself.
+        base_url: ${SEAT_B_URL}
+        api_key: ${SEAT_B_KEY}
+        params:
+          max_tokens: 8192
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Drift II
+      type: agent
+      description: Panel seat C, rebuttal round.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${SEAT_C_MODEL}
+        provider: ${SEAT_C_PROVIDER}
+        role: |-
+          ${SEAT_PROMPT}
+
+          ${REBUTTAL_PROMPT}
+
+          You are the seat named DRIFT. Sign your answer "DRIFT" and use no other name for
+          yourself.
+        base_url: ${SEAT_C_URL}
+        api_key: ${SEAT_C_KEY}
+        params:
+          max_tokens: 8192
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Tally II
+      type: agent
+      description: Records the closing positions and what actually moved.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${CHAIR_MODEL}
+        provider: ${CHAIR_PROVIDER}
+        role: |-
+          You are the CLERK. You record; you do not judge and you do not answer the question.
+
+          This is the closing round. For each seat, also record MOVED: what changed from its
+          opening position and why, or "unchanged" with the reason it gave.
+
+          For each seat that spoke, record:
+
+          SEAT: <name>
+          POSITION: their verdict, in their words. Quote the sentence.
+          KEY ARGUMENT: the load-bearing reason, one line.
+          WOULD CHANGE IF: what they said would move them.
+
+          Then:
+
+          SPLIT: do the seats agree or disagree? If they disagree, name the exact point of
+          disagreement - not "they differ in emphasis", but the specific claim one asserts
+          and another denies.
+          UNCHALLENGED: any claim every seat assumed without argument. This is the most
+          valuable line you write: a shared blind spot survives a unanimous panel, and
+          nobody else in this process is looking for it.
+
+          Do not paraphrase a position into agreement it does not have. Two seats using
+          different words for the same verdict is agreement; two seats using the same words
+          for different verdicts is not.
+        base_url: ${CHAIR_URL}
+        api_key: ${CHAIR_KEY}
+        params:
+          max_tokens: 8192
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
     - id: Chair
       type: agent
       description: Reads the disagreement and rules.
@@ -172,10 +308,14 @@ graph:
         name: ${CHAIR_MODEL}
         provider: ${CHAIR_PROVIDER}
         role: |-
-          You are the CHAIR. Three seats answered the same question independently. They did
-          not see each other's answers, so their agreement - where it exists - is genuinely
-          independent rather than negotiated, and their disagreement has not been smoothed
-          over by a round of consensus-seeking. Read it that way.
+          You are the CHAIR. Three seats answered the same question independently, then saw
+          the others' answers - names withheld - and had exactly one round to respond.
+
+          Read both rounds. The opening answers are independent, so agreement there is real
+          evidence. The closing answers show what survived contact with counter-argument,
+          which is different information: a position that held under direct challenge is
+          stronger than one that was never tested, and a seat that moved for a good reason
+          tells you more than one that never budged.
 
           Your job is not to average them and it is not to pick a favourite. It is to read
           what their agreement and disagreement actually tells you, and then to answer the
@@ -300,6 +440,104 @@ graph:
       dynamic: null
 
     - from: Tally
+      to: Rebuttal Floor
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Rebuttal Floor
+      to: Rune II
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Rebuttal Floor
+      to: Flux II
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Rebuttal Floor
+      to: Drift II
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Rune II
+      to: Tally II
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Flux II
+      to: Tally II
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Drift II
+      to: Tally II
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Tally II
       to: Chair
       trigger: true
       condition:
