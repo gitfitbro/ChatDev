@@ -1,6 +1,9 @@
 version: 0.0.0
 vars:
-  MODEL_NAME: claude-opus-5
+  MODEL_NAME: ${CREW_MODEL}
+  PROVIDER: ${CREW_PROVIDER}
+  CREW_KEY: ${CREW_API_KEY}
+  CREW_URL: ${CREW_BASE_URL}
   CREW_PROMPT: |-
     You are aboard the Orca. Unlike a simulation, the crewmates here are real: a dispatch
     spawns an agent in an actual git worktree that will spend real compute and write real
@@ -36,7 +39,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -51,11 +54,10 @@ graph:
           Do not name specific worktrees or handles; the berth scout has not reported yet.
 
           Do not write implementation. Do not dispatch.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 4096
-          effort: high
         tooling: []
         thinking: null
         memories: []
@@ -68,7 +70,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -104,11 +106,10 @@ graph:
 
           If a tool returned ok=false, quote its error rather than working around it. If there
           are no free berths, say so plainly - that is a valid and important finding.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 8192
-          effort: high
         tooling:
           - type: function
             config:
@@ -130,7 +131,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -159,11 +160,10 @@ graph:
             preview: <what dispatch_preview returned, or "unavailable in dry run">
           DROPPED: tasks you chose not to plan, and why, or "none".
           RISK: what could go wrong if the captain approves this, in one or two lines.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 16000
-          effort: high
         tooling:
           - type: function
             config:
@@ -201,7 +201,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -222,11 +222,10 @@ graph:
           NOT SENT: tasks in the plan the captain did not approve, or "none".
 
           Never invent a dispatch that did not happen. If nothing was dispatched, say that first.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 8192
-          effort: high
         tooling:
           - type: function
             config:
@@ -247,7 +246,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -261,11 +260,10 @@ graph:
           NEXT: what would have to change for this plan to be approved, in one or two lines.
 
           Do not argue with the decision and do not re-propose the plan.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 4096
-          effort: medium
         tooling: []
         thinking: null
         memories: []
@@ -278,7 +276,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -299,11 +297,10 @@ graph:
 
           If nothing was dispatched, say so in one line and stop - do not report on unrelated
           fleet activity as though it were this run's work.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 8192
-          effort: high
         tooling:
           - type: function
             config:

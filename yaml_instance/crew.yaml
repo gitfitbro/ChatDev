@@ -1,6 +1,9 @@
 version: 0.0.0
 vars:
-  MODEL_NAME: claude-opus-5
+  MODEL_NAME: ${CREW_MODEL}
+  PROVIDER: ${CREW_PROVIDER}
+  CREW_KEY: ${CREW_API_KEY}
+  CREW_URL: ${CREW_BASE_URL}
   CREW_PROMPT: |-
     You are aboard the Orca, crewing for a captain who dispatches parallel agents into
     isolated worktrees. The crew has two kinds of task and the distinction is absolute:
@@ -31,7 +34,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -44,11 +47,10 @@ graph:
           CONSTRAINTS: what the crew must not do (scope limits, files to leave alone, decisions reserved for you).
 
           Do not propose an implementation. Do not assign crewmates - that is the first mate's job.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 4096
-          effort: high
         tooling: []
         thinking: null
         memories: []
@@ -61,7 +63,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -86,11 +88,10 @@ graph:
           thing is a collision, not parallelism. If the task only supports one ship task, give
           Ship Crewmate B the verification work instead (tests, a runnable check) and say so.
           If the captain wrote "RECON NEEDED: none", give the Scout the verification brief.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 4096
-          effort: high
         tooling: []
         thinking: null
         memories: []
@@ -103,7 +104,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -116,11 +117,10 @@ graph:
           Mark anything you could not verify as UNVERIFIED rather than guessing.
 
           End with: FINDINGS FOR SHIP: <what the ship crewmates need to know before they build>
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 8192
-          effort: high
         tooling:
           - type: function
             config:
@@ -150,7 +150,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -164,11 +164,10 @@ graph:
           If the reviewer sent you a REWORK, address only the objections raised against your work.
 
           End with: DELIVERED: <files written, and the command you ran to prove it works>
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 16000
-          effort: high
         tooling:
           - type: function
             config:
@@ -190,7 +189,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -204,11 +203,10 @@ graph:
           If the reviewer sent you a REWORK, address only the objections raised against your work.
 
           End with: DELIVERED: <files written, and the command you ran to prove it works>
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 16000
-          effort: high
         tooling:
           - type: function
             config:
@@ -230,7 +228,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -254,11 +252,10 @@ graph:
           the DONE WHEN criteria - style preferences are not blockers.
 
           Write the literal string <APPROVED> only when every criterion is met.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 8192
-          effort: high
         tooling:
           - type: function
             config:
@@ -289,7 +286,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${CREW_PROMPT}
 
@@ -307,11 +304,10 @@ graph:
           NEXT BEARING: the one thing worth doing next, or "none".
 
           Report faithfully. If a crewmate's work did not land, say so plainly.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 8192
-          effort: high
         tooling:
           - type: function
             config:

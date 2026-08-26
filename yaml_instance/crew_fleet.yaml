@@ -1,6 +1,9 @@
 version: 0.0.0
 vars:
-  MODEL_NAME: claude-opus-5
+  MODEL_NAME: ${CREW_MODEL}
+  PROVIDER: ${CREW_PROVIDER}
+  CREW_KEY: ${CREW_API_KEY}
+  CREW_URL: ${CREW_BASE_URL}
   EVIDENCE: |-
     EVIDENCE GRADING - required in every report you write.
     Tag each factual claim with where it came from:
@@ -25,7 +28,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${EVIDENCE}
 
@@ -45,11 +48,10 @@ graph:
 
           Report only what the tools returned. If a field is missing from the output, write
           "unknown" - do not infer it, and do not describe a fleet you did not observe.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 8192
-          effort: medium
         tooling:
           - type: function
             config:
@@ -70,7 +72,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${EVIDENCE}
 
@@ -95,11 +97,10 @@ graph:
           NEEDS A HUMAN: anything you cannot resolve by reading, or "none".
 
           Do not invent anomalies to fill the section. A clean fleet is a valid finding.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 8192
-          effort: high
         tooling:
           - type: function
             config:
@@ -121,7 +122,7 @@ graph:
       log_output: true
       config:
         name: ${MODEL_NAME}
-        provider: anthropic
+        provider: ${PROVIDER}
         role: |-
           ${EVIDENCE}
 
@@ -138,11 +139,10 @@ graph:
 
           If the lookout reported tool failures, say so in BEARINGS rather than presenting a
           partial picture as complete.
-        base_url: ''
-        api_key: ${ANTHROPIC_API_KEY}
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
         params:
           max_tokens: 4096
-          effort: medium
         tooling: []
         thinking: null
         memories: []
