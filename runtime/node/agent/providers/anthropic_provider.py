@@ -186,9 +186,15 @@ class AnthropicProvider(ModelProvider):
         if output_config:
             payload["output_config"] = output_config
 
-        if self._model_rejects_sampling(model_name):
-            for key in _SAMPLING_KEYS:
-                options.pop(key, None)
+        # The SDK's messages.create() has no temperature/top_p/top_k parameters and no
+        # **kwargs, so splatting them raises TypeError before a request is ever made.
+        # Models that still accept them need the extra_body escape hatch; models that
+        # removed them would 400 anyway, so drop those outright.
+        sampling = {k: options.pop(k) for k in _SAMPLING_KEYS if k in options}
+        if sampling and not self._model_rejects_sampling(model_name):
+            extra_body = dict(options.pop("extra_body", None) or {})
+            extra_body.update({k: v for k, v in sampling.items() if v is not None})
+            payload["extra_body"] = extra_body
 
         # Anything left over (thinking, stop_sequences, betas, ...) passes straight through.
         payload.update({key: value for key, value in options.items() if value is not None})

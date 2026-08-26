@@ -109,11 +109,32 @@ def test_sampling_params_are_dropped_for_models_that_reject_them():
     assert payload["model"] == "claude-opus-5"
 
 
-def test_sampling_params_survive_on_models_that_accept_them():
-    provider = build_provider(name="claude-haiku-4-5", params={"temperature": 0.7})
+def test_sampling_params_ride_in_extra_body_never_as_top_level_kwargs():
+    """The SDK types no temperature/top_p/top_k and has no **kwargs.
+
+    Asserting `payload["temperature"] == 0.7` - as this test used to - passes while
+    client.messages.create(**payload) raises TypeError before any request is made.
+    """
+    provider = build_provider(name="claude-haiku-4-5", params={"temperature": 0.7, "top_p": 0.9})
     payload = provider._build_payload("sys", [{"role": "user", "content": []}], None, {})
 
-    assert payload["temperature"] == 0.7
+    assert "temperature" not in payload
+    assert "top_p" not in payload
+    assert payload["extra_body"] == {"temperature": 0.7, "top_p": 0.9}
+
+
+def test_the_payload_only_contains_keys_the_sdk_actually_accepts():
+    """Guards the whole class of bug, not just the sampling case."""
+    import inspect
+    import anthropic
+
+    accepted = set(inspect.signature(anthropic.Anthropic(api_key="x").messages.create).parameters)
+    provider = build_provider(params={"temperature": 0.7, "max_tokens": 2048, "effort": "high"})
+    payload = provider._build_payload("sys", [{"role": "user", "content": []}], None, {})
+    payload.pop("__stream__")
+
+    unknown = set(payload) - accepted
+    assert not unknown, f"payload keys the SDK cannot accept: {unknown}"
 
 
 def test_effort_is_nested_under_output_config():

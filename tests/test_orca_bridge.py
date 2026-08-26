@@ -293,3 +293,15 @@ def test_inspection_cap_is_reported_not_silent(monkeypatch):
 
     assert result["inspected"] == 3
     assert result["not_inspected"] == 7
+
+
+def test_task_create_uses_the_flag_the_cli_actually_accepts(open_gate, monkeypatch):
+    """The CLI rejects --title; the real flag is --task-title. Caught in a live run."""
+    calls = []
+    monkeypatch.setattr(orca, "_run", _fake_run(calls, {"ok": True}))
+
+    orca.orca_task_create("do the thing", title="A Title")
+
+    assert "--task-title" in calls[0]
+    assert "--title" not in calls[0]
+    assert calls[0][calls[0].index("--task-title") + 1] == "A Title"

@@ -343,7 +343,8 @@ def orca_task_create(spec: str, title: str = "") -> dict:
 
     args = ["orchestration", "task-create", "--spec", spec, "--json"]
     if title:
-        args += ["--title", title]
+        # The CLI flag is --task-title; --title is rejected as an unknown flag.
+        args += ["--task-title", title]
     return _run(args)
 
 
@@ -405,4 +406,5 @@ def orca_task_update(task_id: str, status: str) -> dict:
         return _refuse_write("orchestration task-update")
     if not task_id or not status:
         return {"ok": False, "error": "missing_task_or_status"}
-    return _run(["orchestration", "task-update", "--task", task_id, "--status", status, "--json"])
+    # The CLI flag is --id; --task is rejected as an unknown flag.
+    return _run(["orchestration", "task-update", "--id", task_id, "--status", status, "--json"])

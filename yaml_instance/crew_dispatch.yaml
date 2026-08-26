@@ -78,12 +78,25 @@ graph:
 
           Output:
 
-          FREE BERTHS: terminal handles with no active task, one per line, with the worktree
-          they sit in. These are the only legal dispatch targets.
+          FREE BERTHS: a dispatchable berth needs BOTH conditions, and they pull in opposite
+          directions - this is the trap:
+            (a) no active task, and
+            (b) a live agent CLI running in the terminal to receive the injected prompt.
+          A `reclaimable` terminal whose agent finished satisfies (a) and fails (b):
+          `hasAttachedPty: false` / `liveTerminalCount: 0` means there is nobody home to
+          inject into, and dispatch fails with "no recognized agent detected". Free of work
+          is not the same as ready for work.
+          List handles meeting BOTH, with the worktree they sit in, and cite the field that
+          shows the agent is live. If none qualify, say so - that is the finding, and the
+          answer is to stand up a berth (create a terminal, start the agent CLI, wait for it
+          to go idle), not to dispatch into an empty one.
           OCCUPIED: handles currently working, and on what - so the first mate does not
           dispatch into a berth that is busy.
           COLLISIONS: any in-flight task already touching the captain's SCOPE. A second
           crewmate in the same files is a collision, not parallelism - name it here.
+          NO BERTH: if nothing satisfies both conditions above, say so plainly rather than
+          naming the least-bad option. A named berth that cannot receive a dispatch costs a
+          full planning round to discover.
           FLEET HEALTH: anything that would make a dispatch fail (no bound run, orphaned
           terminals, auth prompts blocking a worktree), or "clear". Call orca_stalled_workers -
           a task still marked `dispatched` whose heartbeat aged out is a dead crewmate holding
