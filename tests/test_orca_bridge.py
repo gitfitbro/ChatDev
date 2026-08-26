@@ -342,3 +342,35 @@ def test_an_unwritable_audit_log_never_blocks_the_tool(monkeypatch, open_gate):
     monkeypatch.setattr(orca, "_run", _fake_run([], {"ok": True}))
 
     assert orca.orca_dispatch("task_1", "term_1")["ok"] is True
+
+
+def test_a_cap_drops_history_not_live_work(monkeypatch):
+    """26 tasks, a cap of 25, and the only live one last: it must survive.
+
+    Reporting the truncation is not enough - the lookout reported it faithfully and
+    still concluded the fleet was idle, because the one row that mattered was cut.
+    """
+    tasks = [{"id": f"task_{i}", "status": "completed"} for i in range(25)]
+    tasks.append({"id": "task_live", "status": "dispatched"})
+    monkeypatch.setattr(orca, "_run", _fake_run([], {"ok": True, "data": {"result": {"tasks": tasks}}}))
+
+    inner = orca.orca_task_list(limit=25)["data"]["result"]
+    shown = [t["id"] for t in inner["tasks"]]
+
+    assert "task_live" in shown
+    assert shown[0] == "task_live"
+    assert inner["truncated"]["tasks"]["total"] == 26
+
+
+def test_ordering_is_live_then_ready_then_finished(monkeypatch):
+    tasks = [
+        {"id": "done", "status": "completed"},
+        {"id": "queued", "status": "ready"},
+        {"id": "broken", "status": "failed"},
+        {"id": "working", "status": "running"},
+    ]
+    monkeypatch.setattr(orca, "_run", _fake_run([], {"ok": True, "data": {"result": {"tasks": tasks}}}))
+
+    shown = [t["id"] for t in orca.orca_task_list(limit=0)["data"]["result"]["tasks"]]
+
+    assert shown == ["working", "queued", "broken", "done"]

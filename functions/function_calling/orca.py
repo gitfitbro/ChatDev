@@ -150,6 +150,29 @@ def _run_bound(args: List[str]) -> Dict[str, Any]:
     return retried
 
 
+# Live work first, then work that could become live, then history. A cap that drops an
+# active task is worse than no cap: the report stays honest about truncating, and the
+# conclusion drawn from it is still wrong.
+_STATUS_PRIORITY = {
+    "dispatched": 0, "running": 0, "in_progress": 0,
+    "ready": 1, "pending": 1, "blocked": 2, "failed": 3, "completed": 4,
+}
+
+
+def _live_first(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Order tasks so a truncation cap can never hide active work."""
+    payload = result.get("data")
+    inner = payload.get("result") if isinstance(payload, dict) else None
+    if not isinstance(inner, dict):
+        return result
+    tasks = inner.get("tasks")
+    if isinstance(tasks, list):
+        inner["tasks"] = sorted(
+            tasks, key=lambda t: _STATUS_PRIORITY.get((t or {}).get("status"), 5)
+        )
+    return result
+
+
 def _truncate(result: Dict[str, Any], key: str, limit: int) -> Dict[str, Any]:
     """Cap a list inside an orca payload, recording what was dropped.
 
@@ -206,7 +229,8 @@ def orca_task_list(status: str = "", ready_only: bool = False, run_id: str = "",
         ready_only: When True, list only tasks whose dependencies are satisfied.
         run_id: Restrict to one orchestration run. Leave empty for the bound run.
         limit: Maximum tasks to return. Any cap is reported under result.truncated.
-               Pass 0 for no cap. Filter with status before raising this.
+               Pass 0 for no cap. Results are ordered live work first, so a cap drops
+               finished history rather than active tasks.
     """
     args = ["orchestration", "task-list", "--brief", "--json"]
     if status:
@@ -215,7 +239,7 @@ def orca_task_list(status: str = "", ready_only: bool = False, run_id: str = "",
         args.append("--ready")
     if run_id:
         args += ["--run", run_id]
-    return _truncate(_run_bound(args), "tasks", limit)
+    return _truncate(_live_first(_run_bound(args)), "tasks", limit)
 
 
 def orca_worker_list(run_id: str = "", terminal_state: str = "", limit: int = 25) -> dict:
