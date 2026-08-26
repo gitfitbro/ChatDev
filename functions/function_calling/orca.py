@@ -29,6 +29,7 @@ def _writes_allowed() -> bool:
     return os.environ.get(_WRITE_ENV_FLAG, "").strip() in {"1", "true", "yes"}
 
 def _refuse_write(command: str) -> Dict[str, Any]:
+    _audit("refused", {"command": command})
     return {
         "ok": False,
         "error": "write_not_permitted",
@@ -38,6 +39,33 @@ def _refuse_write(command: str) -> Dict[str, Any]:
             "environment to allow this workflow to change fleet state."
         ),
     }
+
+
+_AUDIT_PATH = os.environ.get("ORCA_BRIDGE_AUDIT_LOG", "orca_bridge_audit.log")
+
+
+def _audit(action: str, detail: Dict[str, Any]) -> None:
+    """Append a line for every fleet-mutating attempt, permitted or refused.
+
+    A gate with no record is the failure an adversarial panel flagged: switched on
+    once and forgotten, with nothing to show what went through it. Both outcomes are
+    logged - a refusal is evidence the gate held, and is as worth keeping as a write.
+    Never raises: an unwritable audit log must not block or mask the tool's result.
+    """
+    try:
+        line = json.dumps(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "action": action,
+                "gate_open": _writes_allowed(),
+                **detail,
+            },
+            ensure_ascii=False,
+        )
+        with open(_AUDIT_PATH, "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except Exception:
+        pass
 
 
 def _run(args: List[str], *, timeout: int = _DEFAULT_TIMEOUT_SECONDS) -> Dict[str, Any]:
@@ -341,6 +369,7 @@ def orca_task_create(spec: str, title: str = "") -> dict:
     if not spec.strip():
         return {"ok": False, "error": "empty_spec"}
 
+    _audit("task_create", {"spec": spec[:300], "title": title})
     args = ["orchestration", "task-create", "--spec", spec, "--json"]
     if title:
         # The CLI flag is --task-title; --title is rejected as an unknown flag.
@@ -363,6 +392,7 @@ def orca_dispatch(task_id: str, to_handle: str, inject: bool = True) -> dict:
     if not task_id or not to_handle:
         return {"ok": False, "error": "missing_task_or_handle"}
 
+    _audit("dispatch", {"task_id": task_id, "to_handle": to_handle, "inject": inject})
     args = ["orchestration", "dispatch", "--task", task_id, "--to", to_handle, "--json"]
     if inject:
         args.append("--inject")
@@ -406,5 +436,6 @@ def orca_task_update(task_id: str, status: str) -> dict:
         return _refuse_write("orchestration task-update")
     if not task_id or not status:
         return {"ok": False, "error": "missing_task_or_status"}
+    _audit("task_update", {"task_id": task_id, "status": status})
     # The CLI flag is --id; --task is rejected as an unknown flag.
     return _run(["orchestration", "task-update", "--id", task_id, "--status", status, "--json"])

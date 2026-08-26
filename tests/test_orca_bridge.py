@@ -305,3 +305,40 @@ def test_task_create_uses_the_flag_the_cli_actually_accepts(open_gate, monkeypat
     assert "--task-title" in calls[0]
     assert "--title" not in calls[0]
     assert calls[0][calls[0].index("--task-title") + 1] == "A Title"
+
+
+# --- audit trail -----------------------------------------------------------
+
+
+def test_a_refused_write_is_recorded(tmp_path, monkeypatch):
+    """A refusal is evidence the gate held; it belongs in the log as much as a write."""
+    log = tmp_path / "audit.log"
+    monkeypatch.setattr(orca, "_AUDIT_PATH", str(log))
+
+    orca.orca_dispatch("task_1", "term_1")
+
+    entry = json.loads(log.read_text().strip())
+    assert entry["action"] == "refused"
+    assert entry["gate_open"] is False
+    assert entry["command"] == "orchestration dispatch"
+
+
+def test_a_permitted_write_is_recorded_with_the_gate_state(tmp_path, monkeypatch, open_gate):
+    log = tmp_path / "audit.log"
+    monkeypatch.setattr(orca, "_AUDIT_PATH", str(log))
+    monkeypatch.setattr(orca, "_run", _fake_run([], {"ok": True}))
+
+    orca.orca_dispatch("task_1", "term_1")
+
+    entry = json.loads(log.read_text().strip())
+    assert entry["action"] == "dispatch"
+    assert entry["gate_open"] is True
+    assert entry["task_id"] == "task_1"
+
+
+def test_an_unwritable_audit_log_never_blocks_the_tool(monkeypatch, open_gate):
+    """Losing the record is bad; losing the dispatch because of it is worse."""
+    monkeypatch.setattr(orca, "_AUDIT_PATH", "/nonexistent-dir/audit.log")
+    monkeypatch.setattr(orca, "_run", _fake_run([], {"ok": True}))
+
+    assert orca.orca_dispatch("task_1", "term_1")["ok"] is True

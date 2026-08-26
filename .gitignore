@@ -32,3 +32,6 @@ WareHouse/
 # Local crew-extension scratch (contains live fleet handles and paths)
 dispatch_plan.txt
 decision.txt
+
+# Audit log for fleet-mutating attempts (local record, not source)
+orca_bridge_audit.log
