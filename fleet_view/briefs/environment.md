@@ -4,15 +4,14 @@ Repo: ChatDev (fork `gitfitbro/ChatDev`, remote is named `fork`, NOT `origin` �
 Branch from `crew-extensions`. Open your PR against `crew-extensions`, NOT main.
 Feature branch -> PR -> review. Never merge.
 
-## KNOWN BLOCKER — read before you start
-The operator's active `gh` account is `wrobl`, which does NOT have push access to
-`gitfitbro/ChatDev`. Your `git push` WILL fail with 403. This is known and is the
-operator's to fix, not yours.
+## Push auth — resolved 2026-08-27
+The operator's active `gh` account is `gitfitbro`, which HAS push access to
+`gitfitbro/ChatDev`. Push normally.
 
 - Do NOT run `gh auth switch`, `gh auth login`, or change any git/gh global config.
-- Commit your work locally anyway, in clean commits.
-- If the push fails, say so in your `worker_done` and stop. Your commits are safe in
-  the worktree and the first mate will push them once auth is resolved.
+  If a push ever fails on auth, report it in your `worker_done` and stop — the first
+  mate or the operator resolves it, never you.
+- Commit in clean commits as you go, so work survives a blocked push.
 
 ## Read first
 - `fleet_view/model.py` — the fleet model. Rooms, occupants, states, districts.
