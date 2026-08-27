@@ -33,7 +33,15 @@
                  border-radius:6px;padding:4px 12px;cursor:pointer}
   #reader pre{margin:0;padding:16px 18px;overflow:auto;flex:1;white-space:pre-wrap;word-break:break-word;
               color:#cfd8e3;font-size:12.5px;line-height:1.6}
-  body.present #hud .sp{display:none}
+  body.present #hud .sp{opacity:0;transition:opacity .18s}
+  body.present #hud .sp:hover,body.present #hud .sp:focus-within{opacity:1}
+  /* A always-hittable corner so the controls can be found without knowing they are there. */
+  body.present #hud{pointer-events:none}
+  body.present #hud .sp{pointer-events:auto;padding:6px 8px;border-radius:8px}
+  body.present #hud .sp:hover{background:rgba(17,22,29,.92);border:1px solid var(--line)}
+  #escape{position:fixed;right:10px;top:10px;z-index:9;color:var(--faint);font-size:10px;
+          opacity:0;transition:opacity .18s;pointer-events:none}
+  body.present #escape{opacity:.5}
 
   /* Panels: the things you act on, over the floor you watch. */
   #side{position:fixed;top:44px;right:0;bottom:0;width:330px;z-index:6;display:flex;
@@ -78,6 +86,7 @@
   </div>
 </div>
 <canvas id="c"></canvas>
+<div id="escape">esc to exit present</div>
 <div id="side">
   <section class="panel" id="who"><h3>Nobody selected</h3><div class="body">click a character on the floor</div></section>
   <section class="panel"><h3>Waiting on review <b id="pr-n">0</b></h3><div class="rows" id="prs"></div></section>
@@ -104,6 +113,21 @@
  *
  * Reads GET /api/fleet and nothing else. Swap this file for a different look.
  */
+/* Effects register themselves here. Each lives in its own file under fx/ so two
+ * people can build two effects without touching the same lines. See fx/README.md.
+ */
+const FX = {
+  hooks: [],
+  register(hook){ this.hooks.push(hook); },
+  emit(name, ...args){
+    for (const h of this.hooks){
+      try { h[name]?.(...args); }
+      catch (e) { console.error(`fx:${h.name||"?"}.${name}`, e); }  // one bad effect must not stop the floor
+    }
+  },
+};
+window.FleetFX = FX;
+
 const C = document.getElementById("c"), X = C.getContext("2d");
 const $ = id => document.getElementById(id);
 const KIND = { claude:"#d98a5a", codex:"#7aa2f7", grok:"#bb9af7", agent:"#8a94a6" };
@@ -119,6 +143,18 @@ function resize(){
 addEventListener("resize", resize);
 
 let fleet = null, rooms = [], souls = [], t = 0;
+
+// What an effect is allowed to see. Read-only by convention: mutate a soul and the
+// next poll overwrites you.
+const world = {
+  get ctx(){ return X; }, get w(){ return W; }, get h(){ return H; },
+  get frame(){ return t; }, get rooms(){ return rooms; }, get souls(){ return souls; },
+  get fleet(){ return fleet; },
+  palette: { kind: KIND, state: STATE },
+  soul: id => souls.find(s => s.id === id),
+  room: id => rooms.find(r => r.id === id),
+  openArtifact: a => openArtifact(a),
+};
 
 /* ---- layout: rooms on a floor, sized to fit whatever the fleet is today ---- */
 function layout(){
@@ -267,8 +303,10 @@ function frame(){
   X.clearRect(0,0,W,H);
   X.fillStyle = "#0a0c10"; X.fillRect(0,0,W,H);
   for (const r of rooms) drawRoom(r);
+  FX.emit("drawUnder", world);                      // floor decals, construction sites
   for (const s of souls){ think(s); move(s); }
   souls.sort((a,b)=>a.y-b.y).forEach(drawSoul);
+  FX.emit("drawOver", world);                       // reapers, banners, anything above people
   requestAnimationFrame(frame);
 }
 
@@ -294,6 +332,7 @@ C.addEventListener("mousemove", e => {
     tip.style.top  = Math.min(H-120, e.clientY+14) + "px";
   } else { tip.style.display = "none"; C.style.cursor = "default"; }
 });
+const seenEvents = new Set();
 let selected = null;
 C.addEventListener("click", () => {
   const s = souls.find(s => s.hover);
@@ -328,16 +367,24 @@ async function openArtifact(a){
   catch(e){ $("rbody").textContent = "could not read: "+e; }
 }
 function closeReader(){ $("reader").classList.remove("on"); }
-addEventListener("keydown", e => { if(e.key==="Escape") closeReader(); });
+addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  // Escape closes the reader first; if nothing is open it leaves present mode, so
+  // present can never become a state you cannot get out of.
+  if ($("reader").classList.contains("on")) { closeReader(); return; }
+  if (document.body.classList.contains("present")) {
+    present.checked = false; present.onchange();
+  }
+});
 $("reader").addEventListener("click", e => { if(e.target.id==="reader") closeReader(); });
 
+const present = $("present");
 const panels = $("panels");
 panels.checked = localStorage.getItem("fleet.panels") !== "0";
 $("side").classList.toggle("hidden", !panels.checked);
 panels.onchange = () => { localStorage.setItem("fleet.panels", panels.checked?"1":"0");
                           $("side").classList.toggle("hidden", !panels.checked); resize(); };
 
-const present = $("present");
 present.checked = localStorage.getItem("fleet.present")==="1";
 document.body.classList.toggle("present", present.checked);
 present.onchange = () => { localStorage.setItem("fleet.present", present.checked?"1":"0");
@@ -348,6 +395,13 @@ async function poll(){
     const f = await (await fetch("/api/fleet")).json();
     if (!f.ok) return;
     fleet = f; layout();
+    FX.emit("onFleet", world);
+    // Transitions arrive with a TTL, so the same event is seen on several polls.
+    for (const e of f.events || []){
+      if (seenEvents.has(e.id)) continue;
+      seenEvents.add(e.id);
+      FX.emit("onEvent", e, world);
+    }
     const T = f.totals || {};
     $("n-work").textContent = T.working ?? 0; $("n-idle").textContent = T.idle ?? 0;
     $("n-stall").textContent = T.stalled ?? 0; $("n-ghost").textContent = T.ghosts ?? 0;
@@ -379,6 +433,15 @@ async function poll(){
     renderWho();
   } catch(e){ $("stamp").textContent = "offline"; }
 }
+// Each effect is optional: a file that does not exist yet simply does not load, so
+// four of these can be built in parallel without anyone waiting on anyone.
+for (const name of ["_smoke","reaper","build","ceo","sprites"]){
+  const el = document.createElement("script");
+  el.src = `fx/${name}.js`; el.async = false;
+  el.onerror = () => {};
+  document.head.appendChild(el);
+}
+
 resize(); poll(); frame(); setInterval(poll, 5000);
 </script>
 </body>
