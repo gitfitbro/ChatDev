@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet — the floor</title>
+<style>
+  :root{ --bg:#0a0c10; --ink:#e8edf4; --dim:#8792a2; --faint:#4a5560; --line:#242c36; }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
+       font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+  canvas{display:block;width:100vw;height:100vh;cursor:default}
+  #hud{position:fixed;top:0;left:0;right:0;padding:9px 14px;display:flex;gap:16px;align-items:center;
+       background:linear-gradient(180deg,rgba(10,12,16,.92),transparent);pointer-events:none;z-index:5}
+  #hud .t{display:flex;gap:6px;align-items:center;color:var(--dim)}
+  #hud b{color:var(--ink);font-variant-numeric:tabular-nums}
+  #hud .sp{margin-left:auto;pointer-events:auto;display:flex;gap:14px;align-items:center}
+  label{color:var(--dim);cursor:pointer;display:flex;gap:5px;align-items:center}
+  #stamp{color:var(--faint)}
+  .sw{width:8px;height:8px;border-radius:2px;display:inline-block}
+  #tip{position:fixed;padding:7px 10px;background:#11161d;border:1px solid var(--line);border-radius:6px;
+       pointer-events:none;display:none;max-width:340px;z-index:20;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+  #tip .n{font-weight:600}
+  #tip .d{color:var(--dim);margin-top:3px;white-space:pre-wrap;word-break:break-word}
+  #reader{position:fixed;inset:0;background:rgba(6,8,10,.88);display:none;padding:5vh 6vw;z-index:30}
+  #reader.on{display:block}
+  #reader .sheet{background:#0f1318;border:1px solid var(--line);border-radius:10px;height:90vh;
+                 display:flex;flex-direction:column}
+  #reader .bar{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+  #reader .bar span{color:var(--faint);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #reader button{margin-left:auto;background:#1c222a;color:var(--ink);border:1px solid var(--line);
+                 border-radius:6px;padding:4px 12px;cursor:pointer}
+  #reader pre{margin:0;padding:16px 18px;overflow:auto;flex:1;white-space:pre-wrap;word-break:break-word;
+              color:#cfd8e3;font-size:12.5px;line-height:1.6}
+  body.present #hud .sp{display:none}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="t"><i class="sw" style="background:#3ddc84"></i>working <b id="n-work">0</b></div>
+  <div class="t"><i class="sw" style="background:#f5b544"></i>idle <b id="n-idle">0</b></div>
+  <div class="t"><i class="sw" style="background:#ff5d5d"></i>stalled <b id="n-stall">0</b></div>
+  <div class="t"><i class="sw" style="background:#8fb7ff"></i>ghosts <b id="n-ghost">0</b></div>
+  <div class="t">PRs <b id="n-pr">0</b></div>
+  <div class="sp">
+    <label><input type="checkbox" id="present"> present</label>
+    <span id="stamp">—</span>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<div id="tip"></div>
+<div id="reader"><div class="sheet">
+  <div class="bar"><b id="rtitle"></b><span id="rmeta"></span><button onclick="closeReader()">close</button></div>
+  <pre id="rbody"></pre>
+</div></div>
+
+<script>
+/* The floor.
+ *
+ * A world, not a dashboard: every character on screen is one real agent in one real
+ * worktree, and what it does here is decided by what it is actually doing there.
+ *
+ *   working   at the desk, typing
+ *   idle      wandering the room
+ *   done      holding up what it produced - click to read the real file
+ *   stalled   asleep; the heartbeat aged out
+ *   ghost     the session is alive and its terminal is gone, so it haunts the room
+ *
+ * Reads GET /api/fleet and nothing else. Swap this file for a different look.
+ */
+const C = document.getElementById("c"), X = C.getContext("2d");
+const $ = id => document.getElementById(id);
+const KIND = { claude:"#d98a5a", codex:"#7aa2f7", grok:"#bb9af7", agent:"#8a94a6" };
+const STATE = { working:"#3ddc84", idle:"#f5b544", stalled:"#ff5d5d", empty:"#39424e" };
+
+let DPR = 1, W = 0, H = 0;
+function resize(){
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = C.clientWidth; H = C.clientHeight;
+  C.width = W * DPR; C.height = H * DPR; X.setTransform(DPR,0,0,DPR,0,0);
+  layout();
+}
+addEventListener("resize", resize);
+
+let fleet = null, rooms = [], souls = [], t = 0;
+
+/* ---- layout: rooms on a floor, sized to fit whatever the fleet is today ---- */
+function layout(){
+  if (!fleet) return;
+  const occupied = [];
+  for (const b of fleet.buildings)
+    for (const r of b.rooms)
+      if (r.occupants.length) occupied.push({ ...r, repo: b.repo });
+
+  const n = Math.max(1, occupied.length);
+  const cols = Math.ceil(Math.sqrt(n * (W / Math.max(1,H)) * 0.85));
+  const rowsN = Math.ceil(n / cols);
+  const padX = 26, padY = 60, gap = 16;
+  const rw = (W - padX*2 - gap*(cols-1)) / cols;
+  const rh = Math.min(210, (H - padY - 26 - gap*(rowsN-1)) / rowsN);
+
+  const prev = new Map(souls.map(s => [s.id, s]));
+  rooms = []; souls = [];
+
+  occupied.forEach((r, i) => {
+    const cx = padX + (i % cols) * (rw + gap);
+    const cy = padY + Math.floor(i / cols) * (rh + gap);
+    const room = { ...r, x:cx, y:cy, w:rw, h:rh };
+    rooms.push(room);
+
+    r.occupants.forEach((p, j) => {
+      const id = `${r.id}:${j}:${p.kind}`;
+      const home = {
+        x: cx + 34 + (j % 3) * Math.max(28, (rw - 80) / 3),
+        y: cy + rh - 44 - Math.floor(j / 3) * 26,
+      };
+      const was = prev.get(id);
+      souls.push({
+        id, ...p, room,
+        // Keep position across refreshes so a poll does not teleport everyone.
+        x: was ? was.x : home.x, y: was ? was.y : home.y,
+        tx: home.x, ty: home.y, home,
+        phase: was ? was.phase : Math.random() * Math.PI * 2,
+        flip: was ? was.flip : 1, hover:false,
+      });
+    });
+  });
+}
+
+/* ---- behaviour: where a character wants to be, given what it is doing ---- */
+function think(s){
+  const busy = s.state === "working" || s.state === "running";
+  const stalled = s.room.state === "stalled";
+  if (busy || stalled) { s.tx = s.home.x; s.ty = s.home.y; return; }
+  // Idle and ghost characters wander their own room.
+  if (Math.hypot(s.x - s.tx, s.y - s.ty) < 3 && Math.random() < 0.012) {
+    const r = s.room;
+    s.tx = r.x + 24 + Math.random() * (r.w - 48);
+    s.ty = r.y + 46 + Math.random() * (r.h - 74);
+  }
+}
+function move(s){
+  const dx = s.tx - s.x, dy = s.ty - s.y, d = Math.hypot(dx,dy);
+  const speed = s.presence === "ghost" ? 0.22 : 0.42;
+  if (d > 1) { s.x += dx/d * speed; s.y += dy/d * speed; if (Math.abs(dx) > .4) s.flip = dx > 0 ? 1 : -1; }
+  s.walking = d > 1;
+}
+
+/* ---- drawing ---- */
+function roundRect(x,y,w,h,r){ X.beginPath(); X.roundRect(x,y,w,h,r); }
+
+function drawRoom(r){
+  const accent = STATE[r.state] || STATE.empty;
+  X.fillStyle = "#12171e"; roundRect(r.x,r.y,r.w,r.h,8); X.fill();
+  X.strokeStyle = "#1e2630"; X.lineWidth = 1; X.stroke();
+  X.fillStyle = accent; roundRect(r.x,r.y,4,r.h,2); X.fill();       // state stripe
+  X.fillStyle = "#0e1218"; roundRect(r.x+6,r.y+1,r.w-7,26,6); X.fill();
+
+  X.fillStyle = "#cbd5e1"; X.font = "600 12px ui-monospace,Menlo,monospace"; X.textAlign = "left";
+  X.fillText(clip(r.name, Math.floor((r.w-90)/7)), r.x+12, r.y+18);
+  X.fillStyle = "#4a5560"; X.font = "10px ui-monospace,Menlo,monospace"; X.textAlign = "right";
+  X.fillText(r.pr ? `#${r.pr} ${r.pr_state||""}` : r.repo, r.x+r.w-10, r.y+18);
+
+  // desks
+  X.fillStyle = "#1a222c";
+  for (let i=0;i<Math.min(3,r.occupants.length);i++) roundRect(r.x+22+i*Math.max(28,(r.w-80)/3), r.y+r.h-34, 26, 9, 2), X.fill();
+}
+
+function drawSoul(s){
+  const col = KIND[s.kind] || KIND.agent;
+  const ghost = s.presence === "ghost";
+  const stalled = s.room.state === "stalled";
+  const bob = s.walking ? Math.sin(t*0.18 + s.phase)*1.4 : Math.sin(t*0.05 + s.phase)*0.7;
+  const x = s.x, y = s.y + (ghost ? Math.sin(t*0.04+s.phase)*2.4 : bob);
+
+  X.save();
+  X.globalAlpha = ghost ? 0.42 : 1;
+
+  if (s.hover){ X.fillStyle = "#ffffff18"; X.beginPath(); X.arc(x, y-6, 17, 0, 7); X.fill(); }
+
+  // shadow — a ghost casts none
+  if (!ghost){ X.fillStyle = "#00000055"; X.beginPath(); X.ellipse(x, y+9, 7, 2.6, 0, 0, 7); X.fill(); }
+
+  if (!ghost && !stalled){                       // legs
+    const sw = s.walking ? Math.sin(t*0.3+s.phase)*2.6 : 0;
+    X.strokeStyle = "#2b3440"; X.lineWidth = 2; X.lineCap = "round";
+    X.beginPath(); X.moveTo(x-2, y+4); X.lineTo(x-2+sw, y+9);
+                   X.moveTo(x+2, y+4); X.lineTo(x+2-sw, y+9); X.stroke();
+  }
+  // body
+  X.fillStyle = col; roundRect(x-5, y-5, 10, 10, 3); X.fill();
+  if (ghost){ X.fillStyle = "#8fb7ff"; roundRect(x-5,y-5,10,10,3); X.fill(); }
+  // head
+  X.fillStyle = ghost ? "#cfe0ff" : "#e8edf4"; X.beginPath(); X.arc(x, y-11, 4.4, 0, 7); X.fill();
+  // eyes: shut when asleep, otherwise facing travel
+  X.fillStyle = "#0b0d10";
+  if (stalled && !ghost){ X.fillRect(x-2.6, y-11.4, 2, 1); X.fillRect(x+0.8, y-11.4, 2, 1); }
+  else { X.fillRect(x - 2.4 + (s.flip>0?1.6:0), y-12.2, 1.5, 1.8);
+         X.fillRect(x + 0.2 + (s.flip>0?1.6:0), y-12.2, 1.5, 1.8); }
+
+  if (stalled && !ghost){                        // sleeping
+    X.fillStyle = "#ff5d5daa"; X.font = "9px ui-monospace,Menlo,monospace"; X.textAlign="left";
+    X.fillText("z", x+7, y-16 - (t*0.05 % 8));
+  }
+  if ((s.state==="working"||s.state==="running") && !ghost){   // typing
+    X.fillStyle = "#3ddc84"; const k = Math.floor(t*0.12) % 3;
+    for (let i=0;i<3;i++){ X.globalAlpha = i===k ? .95 : .25; X.fillRect(x-4+i*3.4, y-19, 2, 2); }
+    X.globalAlpha = 1;
+  }
+  // holding up what it produced
+  if (s.artifacts?.length){
+    const lift = Math.sin(t*0.06 + s.phase) * 1.2;
+    X.fillStyle = "#e9f5ee"; roundRect(x-4.5, y-25+lift, 9, 11, 1.5); X.fill();
+    X.fillStyle = "#7f8c99"; for (let i=0;i<3;i++) X.fillRect(x-2.8, y-22.4+i*2.6+lift, 5.6, .9);
+    X.strokeStyle = "#3ddc84"; X.lineWidth = 1; roundRect(x-4.5, y-25+lift, 9, 11, 1.5); X.stroke();
+  }
+  X.restore();
+
+  X.globalAlpha = ghost ? .5 : .85;
+  X.fillStyle = "#93a1b0"; X.font = "9px ui-monospace,Menlo,monospace"; X.textAlign = "center";
+  X.fillText(s.kind, x, y+20);
+  X.globalAlpha = 1;
+}
+
+const clip = (s,n) => (s||"").length>n ? (s||"").slice(0,n-1)+"…" : (s||"");
+
+function frame(){
+  t++;
+  X.clearRect(0,0,W,H);
+  X.fillStyle = "#0a0c10"; X.fillRect(0,0,W,H);
+  for (const r of rooms) drawRoom(r);
+  for (const s of souls){ think(s); move(s); }
+  souls.sort((a,b)=>a.y-b.y).forEach(drawSoul);
+  requestAnimationFrame(frame);
+}
+
+/* ---- pointing at a character ---- */
+const tip = $("tip");
+C.addEventListener("mousemove", e => {
+  let hit = null;
+  for (const s of souls){ s.hover = false;
+    if (Math.hypot(e.clientX-s.x, e.clientY-(s.y-8)) < 15) hit = s; }
+  if (hit){
+    hit.hover = true;
+    C.style.cursor = hit.artifacts?.length ? "pointer" : "default";
+    const lines = [];
+    if (hit.brief) lines.push(hit.brief);
+    if (hit.doing) lines.push(hit.doing);
+    else if (hit.said) lines.push(`“${hit.said}”`);
+    if (hit.presence === "ghost") lines.push("session alive · terminal closed");
+    if (hit.artifacts?.length) lines.push(`click to read ${hit.artifacts[0].name}`);
+    tip.innerHTML = `<div class="n">${esc(hit.kind)} · ${esc(hit.state)} — ${esc(hit.room.name)}</div>
+                     <div class="d">${esc(lines.join("\n"))}</div>`;
+    tip.style.display = "block";
+    tip.style.left = Math.min(W-350, e.clientX+14) + "px";
+    tip.style.top  = Math.min(H-120, e.clientY+14) + "px";
+  } else { tip.style.display = "none"; C.style.cursor = "default"; }
+});
+C.addEventListener("click", () => {
+  const s = souls.find(s => s.hover && s.artifacts?.length);
+  if (s) openArtifact(s.artifacts[0]);
+});
+
+const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function openArtifact(a){
+  $("rtitle").textContent = a.name; $("rmeta").textContent = a.path;
+  $("rbody").textContent = "loading…"; $("reader").classList.add("on");
+  try { $("rbody").textContent = await (await fetch("/api/artifact?path="+encodeURIComponent(a.path))).text(); }
+  catch(e){ $("rbody").textContent = "could not read: "+e; }
+}
+function closeReader(){ $("reader").classList.remove("on"); }
+addEventListener("keydown", e => { if(e.key==="Escape") closeReader(); });
+$("reader").addEventListener("click", e => { if(e.target.id==="reader") closeReader(); });
+
+const present = $("present");
+present.checked = localStorage.getItem("fleet.present")==="1";
+document.body.classList.toggle("present", present.checked);
+present.onchange = () => { localStorage.setItem("fleet.present", present.checked?"1":"0");
+                           document.body.classList.toggle("present", present.checked); };
+
+async function poll(){
+  try{
+    const f = await (await fetch("/api/fleet")).json();
+    if (!f.ok) return;
+    fleet = f; layout();
+    const T = f.totals || {};
+    $("n-work").textContent = T.working ?? 0; $("n-idle").textContent = T.idle ?? 0;
+    $("n-stall").textContent = T.stalled ?? 0; $("n-ghost").textContent = T.ghosts ?? 0;
+    $("n-pr").textContent = T.prs_open ?? 0;
+    $("stamp").textContent = new Date(f.generated_at*1000).toLocaleTimeString();
+  } catch(e){ $("stamp").textContent = "offline"; }
+}
+resize(); poll(); frame(); setInterval(poll, 5000);
+</script>
+</body>
+</html>

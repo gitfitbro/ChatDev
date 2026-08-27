@@ -6,6 +6,30 @@ One screen showing every agent across every repo, live.
 uv run python -m fleet_view.server        # http://localhost:6500
 ```
 
+Two renderers over the same feed:
+
+| | |
+|---|---|
+| `/world.html` | **the floor** — characters in rooms, doing what they are actually doing |
+| `/` | the board — the same data as rows, when you want to read rather than watch |
+
+## The floor
+
+Every character is one real agent in one real worktree, and what it does on screen is
+decided by what it is doing out there.
+
+| On screen | Means |
+|---|---|
+| at the desk, typing | `working` |
+| wandering the room | `idle` |
+| holding up a page | it produced a file — click to read the real one |
+| asleep, `z` | `stalled`; the heartbeat aged out |
+| translucent, drifting, no shadow | **ghost** — the session is alive and its terminal is gone |
+
+The ghost is not decoration. An agent record with zero live terminals is a session nobody
+is attached to, which is invisible in every other view and is usually what you actually
+wanted to know.
+
 ## What is on it
 
 - **Rooms** — one per worktree, grouped by repo. Border colour is state.

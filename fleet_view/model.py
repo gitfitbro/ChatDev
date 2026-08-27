@@ -44,16 +44,18 @@ _ARTIFACT_RE = re.compile(r"(/Users/[^\s`'\"),]+\.(?:md|json|txt|patch|diff|csv|
 _BRIEF_RE = re.compile(r"\[([^\]]+)\]\s*(ship|scout)\b")
 
 
-def _occupants(worktree: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _occupants(worktree: Dict[str, Any]) -> List[Dict[str, Any]]:  # noqa: C901
     """Who is in the room, what they are holding, and what they last said.
 
     Each agent reports its own state, which is finer than the worktree's: a worktree
     stays `active` while the agent inside it is `done`. Trust the agent.
     """
     people: List[Dict[str, Any]] = []
+    live_terminals = (worktree.get("liveTerminalCount") or 0) > 0
     for agent in worktree.get("agents") or []:
         if isinstance(agent, str):
-            people.append({"kind": agent, "state": "unknown", "doing": None,
+            people.append({"kind": agent, "state": "unknown", "doing": None, "artifacts": [],
+                           "presence": "embodied" if live_terminals else "ghost",
                            "said": None, "task": None, "brief": None})
             continue
         if not isinstance(agent, dict):
@@ -78,8 +80,11 @@ def _occupants(worktree: Dict[str, Any]) -> List[Dict[str, Any]]:
             except OSError:
                 pass
 
+        # A session with nobody attached to it. The agent record is still there, the
+        # terminal is not - so it haunts the room rather than working in it.
         people.append({
             "artifacts": artifacts,
+            "presence": "embodied" if live_terminals else "ghost",
             "kind": (agent.get("agentType") or "agent").lower(),
             "state": (agent.get("state") or "unknown").lower(),
             # What they are doing right now - the single most useful line on the screen.
@@ -224,6 +229,8 @@ def build_fleet(limit: int = 200, stall_after_seconds: int = STALL_AFTER_SECONDS
             "artifacts": len(artifacts),
             "repos": len(ordered),
             "rooms": len(rooms),
+            "ghosts": sum(1 for r in rooms for p in r["occupants"] if p.get("presence") == "ghost"),
+            "souls": sum(len(r["occupants"]) for r in rooms),
             WORKING: sum(1 for r in rooms if r["state"] == WORKING),
             STALLED: sum(1 for r in rooms if r["state"] == STALLED),
             IDLE: sum(1 for r in rooms if r["state"] == IDLE),
