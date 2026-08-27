@@ -74,8 +74,20 @@ can defend.
 ## The interface (contract — do not change it)
 ```python
 def build_environment(repos: list[str], brain: str = "fyx") -> dict:
-    """Never raises. Returns {} on any failure, with the reason in warnings."""
+    """Never raises. On failure returns the SAME schema with ok=False and the reason
+    in warnings - never a bare {}."""
 ```
+A caller must be able to tell "conduit says these repos are unrelated" from "conduit
+could not be reached". A bare `{}` collapses those into one value, which is the silent
+false claim this whole project exists to prevent. The renderer branches on `ok` and on
+emptiness, never on shape.
+
+- conduit binary missing -> `ok: False`, `warnings: ["conduit CLI not found on PATH"]`
+- binary present, brain unreachable -> `ok: False` with that reason
+- brain reachable but no evidence for any edge -> **`ok: True`**, `edges: []`, plus a
+  warning that the graph carried no repo-to-repo evidence. This is a SUCCESSFUL answer,
+  not a failure, and keeping it distinct from the failures is the point of the task.
+
 returning:
 ```python
 {
