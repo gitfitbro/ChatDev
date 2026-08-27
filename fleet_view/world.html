@@ -34,6 +34,34 @@
   #reader pre{margin:0;padding:16px 18px;overflow:auto;flex:1;white-space:pre-wrap;word-break:break-word;
               color:#cfd8e3;font-size:12.5px;line-height:1.6}
   body.present #hud .sp{display:none}
+
+  /* Panels: the things you act on, over the floor you watch. */
+  #side{position:fixed;top:44px;right:0;bottom:0;width:330px;z-index:6;display:flex;
+        flex-direction:column;gap:10px;padding:10px;overflow:auto;
+        background:linear-gradient(270deg,rgba(10,12,16,.94),rgba(10,12,16,.72),transparent)}
+  #side.hidden{display:none}
+  .panel{background:#11161d;border:1px solid var(--line);border-radius:8px;flex:none}
+  .panel h3{margin:0;padding:8px 11px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+            color:var(--dim);border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+  .panel h3 b{margin-left:auto;color:var(--ink)}
+  .panel .rows{max-height:210px;overflow:auto;padding:5px 0}
+  .r{display:flex;gap:8px;align-items:center;padding:4px 11px;font-size:11.5px;cursor:default}
+  .r:hover{background:#161d26}
+  .tag{font-size:9px;padding:1px 5px;border-radius:3px;border:1px solid var(--line);color:var(--dim);
+       text-transform:uppercase;letter-spacing:.04em;flex:none}
+  .tag.open{color:#f5b544;border-color:#5a4326} .tag.merged{color:#3ddc84;border-color:#245c3c}
+  .tag.ready{color:#3ddc84;border-color:#245c3c} .tag.dispatched{color:#7aa2f7;border-color:#2c4a7a}
+  .tag.failed{color:#ff5d5d;border-color:#5c2727} .tag.completed{color:var(--faint)}
+  .r .t2{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .r .n{font-variant-numeric:tabular-nums}
+  .art{display:inline-flex;gap:5px;align-items:center;padding:2px 8px;margin:3px 0 0 11px;border-radius:4px;
+       border:1px solid #2f4a3a;background:#122019;color:#3ddc84;font-size:11px;cursor:pointer}
+  .art:hover{background:#183024}
+  #who .body{padding:9px 11px;font-size:11.5px;color:var(--dim)}
+  #who .body .k{color:var(--ink);font-weight:600}
+  #who .body .line{margin-top:5px;white-space:pre-wrap;word-break:break-word}
+  #who .body .q{color:var(--faint);font-style:italic}
+  body.present #side{display:none}
 </style>
 </head>
 <body>
@@ -44,11 +72,18 @@
   <div class="t"><i class="sw" style="background:#8fb7ff"></i>ghosts <b id="n-ghost">0</b></div>
   <div class="t">PRs <b id="n-pr">0</b></div>
   <div class="sp">
+    <label><input type="checkbox" id="panels" checked> panels</label>
     <label><input type="checkbox" id="present"> present</label>
     <span id="stamp">—</span>
   </div>
 </div>
 <canvas id="c"></canvas>
+<div id="side">
+  <section class="panel" id="who"><h3>Nobody selected</h3><div class="body">click a character on the floor</div></section>
+  <section class="panel"><h3>Waiting on review <b id="pr-n">0</b></h3><div class="rows" id="prs"></div></section>
+  <section class="panel"><h3>Task board <b id="task-n">0</b></h3><div class="rows" id="tasks"></div></section>
+  <section class="panel"><h3>Artifacts <b id="art-n">0</b></h3><div class="rows" id="arts"></div></section>
+</div>
 <div id="tip"></div>
 <div id="reader"><div class="sheet">
   <div class="bar"><b id="rtitle"></b><span id="rmeta"></span><button onclick="closeReader()">close</button></div>
@@ -94,10 +129,12 @@ function layout(){
       if (r.occupants.length) occupied.push({ ...r, repo: b.repo });
 
   const n = Math.max(1, occupied.length);
-  const cols = Math.ceil(Math.sqrt(n * (W / Math.max(1,H)) * 0.85));
+  const cols = Math.ceil(Math.sqrt(n * ((W - ((panels?.checked && !document.body.classList.contains("present")) ? 340 : 0)) / Math.max(1,H)) * 0.85));
   const rowsN = Math.ceil(n / cols);
+  const right = (panels.checked && !document.body.classList.contains("present")) ? 340 : 0;
   const padX = 26, padY = 60, gap = 16;
-  const rw = (W - padX*2 - gap*(cols-1)) / cols;
+  const usable = W - right;
+  const rw = (usable - padX*2 - gap*(cols-1)) / cols;
   const rh = Math.min(210, (H - padY - 26 - gap*(rowsN-1)) / rowsN);
 
   const prev = new Map(souls.map(s => [s.id, s]));
@@ -257,10 +294,30 @@ C.addEventListener("mousemove", e => {
     tip.style.top  = Math.min(H-120, e.clientY+14) + "px";
   } else { tip.style.display = "none"; C.style.cursor = "default"; }
 });
+let selected = null;
 C.addEventListener("click", () => {
-  const s = souls.find(s => s.hover && s.artifacts?.length);
-  if (s) openArtifact(s.artifacts[0]);
+  const s = souls.find(s => s.hover);
+  if (!s) { selected = null; renderWho(); return; }
+  selected = s.id; renderWho();
+  // A character holding a page is the shortest path to the file it wrote.
+  if (s.artifacts?.length) openArtifact(s.artifacts[0]);
 });
+
+function renderWho(){
+  const s = souls.find(x => x.id === selected);
+  const h = document.querySelector("#who h3"), b = document.querySelector("#who .body");
+  if (!s){ h.textContent = "Nobody selected"; b.innerHTML = "click a character on the floor"; return; }
+  h.innerHTML = `${esc(s.kind)} · <span style="color:${STATE[s.room.state]||'#888'}">${esc(s.room.state)}</span>
+                 ${s.presence==="ghost" ? '<b style="color:#8fb7ff">ghost</b>' : ""}`;
+  const bits = [`<div class="line"><span class="k">${esc(s.room.name)}</span> · ${esc(s.room.repo||"")}</div>`];
+  if (s.brief) bits.push(`<div class="line">${esc(s.brief)}</div>`);
+  if (s.task) bits.push(`<div class="line">${esc(s.task)}</div>`);
+  if (s.doing) bits.push(`<div class="line">${esc(s.doing)}</div>`);
+  else if (s.said) bits.push(`<div class="line q">“${esc(s.said)}”</div>`);
+  if (s.presence === "ghost") bits.push(`<div class="line q">session alive · terminal closed</div>`);
+  for (const a of s.artifacts||[]) bits.push(`<div class="art" onclick='openArtifact(${JSON.stringify(a)})'>${esc(a.name)}</div>`);
+  b.innerHTML = bits.join("");
+}
 
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -273,6 +330,12 @@ async function openArtifact(a){
 function closeReader(){ $("reader").classList.remove("on"); }
 addEventListener("keydown", e => { if(e.key==="Escape") closeReader(); });
 $("reader").addEventListener("click", e => { if(e.target.id==="reader") closeReader(); });
+
+const panels = $("panels");
+panels.checked = localStorage.getItem("fleet.panels") !== "0";
+$("side").classList.toggle("hidden", !panels.checked);
+panels.onchange = () => { localStorage.setItem("fleet.panels", panels.checked?"1":"0");
+                          $("side").classList.toggle("hidden", !panels.checked); resize(); };
 
 const present = $("present");
 present.checked = localStorage.getItem("fleet.present")==="1";
@@ -290,6 +353,30 @@ async function poll(){
     $("n-stall").textContent = T.stalled ?? 0; $("n-ghost").textContent = T.ghosts ?? 0;
     $("n-pr").textContent = T.prs_open ?? 0;
     $("stamp").textContent = new Date(f.generated_at*1000).toLocaleTimeString();
+
+    const board = f.board || [];
+    $("pr-n").textContent = board.filter(p=>p.state==="open").length;
+    $("prs").innerHTML = board.length ? board.map(p =>
+      `<div class="r"><span class="tag ${esc(p.state)}">${esc(p.state)}</span>
+       <span class="n">#${p.number}</span><span class="t2">${esc(p.repo)} · ${esc(p.room)}</span></div>`).join("")
+      : `<div class="r"><span class="t2">nothing waiting</span></div>`;
+
+    const rank = {dispatched:0,running:0,ready:1,blocked:2,failed:3,completed:4};
+    const ts = [...(f.tasks||[])].sort((a,b)=>(rank[a.status]??5)-(rank[b.status]??5)).slice(0,40);
+    $("task-n").textContent = (f.totals||{}).tasks_live ?? 0;
+    $("tasks").innerHTML = ts.length ? ts.map(t =>
+      `<div class="r"><span class="tag ${esc(t.status)}">${esc(t.status)}</span>
+       <span class="t2">${esc(t.title)}</span></div>`).join("")
+      : `<div class="r"><span class="t2">no tasks</span></div>`;
+
+    const arts = f.artifacts || [];
+    $("art-n").textContent = arts.length;
+    $("arts").innerHTML = arts.length ? arts.map(a =>
+      `<div class="r"><span class="art" onclick='openArtifact(${JSON.stringify(a)})'>${esc(a.name)}</span>
+       <span class="t2">${esc(a.path.split("/").slice(-2)[0])}</span></div>`).join("")
+      : `<div class="r"><span class="t2">nothing produced yet</span></div>`;
+
+    renderWho();
   } catch(e){ $("stamp").textContent = "offline"; }
 }
 resize(); poll(); frame(); setInterval(poll, 5000);

@@ -33,6 +33,68 @@ _lock = threading.Lock()
 _snapshot: Optional[Dict[str, Any]] = None
 _taken_at = 0.0
 
+# The model answers "what is true now". Only something holding two snapshots can answer
+# "what just changed", and a crewmate that vanished between polls is precisely the thing
+# no single snapshot can ever show.
+_EVENT_TTL_SECONDS = 45
+_prev_souls: Optional[Dict[str, Dict[str, Any]]] = None
+_prev_prs: Dict[str, str] = {}
+_events: list[Dict[str, Any]] = []
+_event_seq = 0
+
+
+def _soul_index(fleet: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Stable identity per occupant, matching the renderer's own id scheme."""
+    index: Dict[str, Dict[str, Any]] = {}
+    for building in fleet.get("buildings") or []:
+        for room in building.get("rooms") or []:
+            for i, person in enumerate(room.get("occupants") or []):
+                index[f"{room.get('id')}:{i}:{person.get('kind')}"] = {
+                    "kind": person.get("kind"),
+                    "presence": person.get("presence"),
+                    "room": room.get("name"),
+                    "repo": building.get("repo"),
+                }
+    return index
+
+
+def _diff(fleet: Dict[str, Any]) -> None:
+    """Record what changed since the previous snapshot."""
+    global _prev_souls, _prev_prs, _event_seq
+
+    now = time.time()
+    souls = _soul_index(fleet)
+
+    if _prev_souls is not None:
+        for sid, was in _prev_souls.items():
+            is_now = souls.get(sid)
+            if is_now is None:
+                _emit("vanished", sid, was)          # the reaper comes for this one
+            elif was["presence"] == "embodied" and is_now["presence"] == "ghost":
+                _emit("ghosted", sid, is_now)
+            elif was["presence"] == "ghost" and is_now["presence"] == "embodied":
+                _emit("returned", sid, is_now)
+        for sid, is_now in souls.items():
+            if sid not in _prev_souls:
+                _emit("appeared", sid, is_now)
+
+    # A PR crossing into merged is a thing getting built.
+    prs = {f"{p['repo']}#{p['number']}": p.get("state") for p in fleet.get("board") or []}
+    for key, state in prs.items():
+        if _prev_prs.get(key) and _prev_prs[key] != "merged" and state == "merged":
+            repo, number = key.split("#")
+            _emit("shipped", key, {"repo": repo, "room": f"#{number}", "kind": "pr"})
+    _prev_prs = prs
+
+    _prev_souls = souls
+    _events[:] = [e for e in _events if now - e["at"] < _EVENT_TTL_SECONDS]
+
+
+def _emit(kind: str, subject: str, info: Dict[str, Any]) -> None:
+    global _event_seq
+    _event_seq += 1
+    _events.append({"id": _event_seq, "type": kind, "soul": subject, "at": time.time(), **info})
+
 
 def current_fleet(max_age: float = _CACHE_SECONDS) -> Dict[str, Any]:
     global _snapshot, _taken_at
@@ -44,6 +106,11 @@ def current_fleet(max_age: float = _CACHE_SECONDS) -> Dict[str, Any]:
                 _snapshot = {"ok": False, "error": "build_failed", "detail": str(exc),
                              "buildings": [], "totals": {}, "warnings": []}
             _taken_at = time.time()
+            try:
+                _diff(_snapshot)
+            except Exception:
+                pass  # a bad diff must never cost you the snapshot
+            _snapshot = {**_snapshot, "events": list(_events)}
         return _snapshot
 
 

@@ -40,7 +40,9 @@ def _ms_age_seconds(stamp: Any) -> Optional[int]:
 _TASK_RE = re.compile(r"task_[0-9a-f]{8,}")
 # Agents announce what they produced by naming its path. That sentence is the
 # difference between watching agents and watching work.
-_ARTIFACT_RE = re.compile(r"(/Users/[^\s`'\"),]+\.(?:md|json|txt|patch|diff|csv|png|svg))")
+# Any absolute path with a document-ish extension. Not just /Users: crew briefs live
+# under /tmp, and an artifact the fleet cannot see is an artifact nobody reads.
+_ARTIFACT_RE = re.compile(r"(/[\w.\-/]+\.(?:md|json|txt|patch|diff|csv|png|svg))")
 _BRIEF_RE = re.compile(r"\[([^\]]+)\]\s*(ship|scout)\b")
 
 
