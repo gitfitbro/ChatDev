@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet</title>
+<style>
+  :root {
+    --bg:#0b0d10; --floor:#14181d; --wall:#1c222a; --line:#2a323d;
+    --ink:#e8edf4; --dim:#7b8794; --faint:#4a5560;
+    --working:#3ddc84; --stalled:#ff5d5d; --idle:#f5b544; --empty:#39424e;
+    --claude:#d98a5a; --codex:#7aa2f7; --grok:#bb9af7; --agent:#8a94a6;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  header {
+    position:sticky; top:0; z-index:10; background:rgba(11,13,16,.94);
+    backdrop-filter:blur(8px); border-bottom:1px solid var(--line);
+    padding:10px 16px; display:flex; gap:18px; align-items:center; flex-wrap:wrap;
+  }
+  h1 { font-size:13px; margin:0; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); }
+  .totals { display:flex; gap:14px; }
+  .t { display:flex; gap:6px; align-items:center; }
+  .t b { font-weight:600; font-variant-numeric:tabular-nums; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .dot.working{background:var(--working)} .dot.stalled{background:var(--stalled)}
+  .dot.idle{background:var(--idle)} .dot.empty{background:var(--empty)}
+  .spacer { margin-left:auto; }
+  label { color:var(--dim); cursor:pointer; user-select:none; display:flex; gap:6px; align-items:center; }
+  #stamp { color:var(--faint); font-size:11px; font-variant-numeric:tabular-nums; }
+
+  main { padding:16px; display:grid; gap:14px;
+         grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); align-items:start; }
+
+  .building { background:var(--wall); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .building > h2 {
+    margin:0; padding:9px 12px; font-size:12px; letter-spacing:.06em;
+    display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#212933,#1a212a);
+  }
+  .building .count { margin-left:auto; color:var(--faint); font-size:11px; }
+
+  .room { padding:9px 12px; border-bottom:1px solid #1a2027; border-left:3px solid var(--empty); background:var(--floor); }
+  .room:last-child { border-bottom:0; }
+  .room.working { border-left-color:var(--working); }
+  .room.stalled { border-left-color:var(--stalled); background:#1d1416; }
+  .room.idle    { border-left-color:var(--idle); }
+  .room.empty   { opacity:.5; }
+  .room-top { display:flex; align-items:baseline; gap:8px; }
+  .name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pr { color:var(--faint); font-size:11px; margin-left:auto; white-space:nowrap; }
+  .pr.merged { color:var(--working); }
+
+  .who { display:flex; flex-wrap:wrap; gap:6px; margin-top:7px; }
+  .agent {
+    display:inline-flex; align-items:center; gap:5px; padding:2px 7px;
+    border:1px solid var(--line); border-radius:999px; font-size:11px; background:#11161c;
+  }
+  .agent .chip { width:7px; height:7px; border-radius:2px; }
+  .agent.claude .chip{background:var(--claude)} .agent.codex .chip{background:var(--codex)}
+  .agent.grok .chip{background:var(--grok)} .agent .chip{background:var(--agent)}
+  .agent .st { color:var(--faint); }
+
+  .doing, .said {
+    margin-top:6px; font-size:11px; color:var(--dim);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .said { color:var(--faint); font-style:italic; }
+  .doing::before { content:"› "; color:var(--working); }
+
+  .pulse { animation:p 1.6s ease-in-out infinite; }
+  @keyframes p { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .warn { margin:0 16px; padding:8px 12px; border-radius:6px;
+          background:#2a1f14; border:1px solid #5a4326; color:#f5b544; font-size:12px; }
+  .empty-state { color:var(--faint); padding:40px; text-align:center; grid-column:1/-1; }
+
+  /* The whiteboard: what is waiting on a human. */
+  .boards { display:grid; gap:14px; grid-template-columns:1fr 1fr; padding:16px 16px 0; }
+  @media (max-width:820px){ .boards{ grid-template-columns:1fr; } }
+  .board { background:var(--wall); border:1px solid var(--line); border-radius:8px; }
+  .board h3 { margin:0; padding:9px 12px; font-size:11px; letter-spacing:.12em;
+              text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--line); }
+  .board .rows { padding:6px 0; max-height:190px; overflow:auto; }
+  .row { display:flex; gap:9px; align-items:center; padding:4px 12px; font-size:12px; }
+  .row .tag { font-size:10px; padding:1px 6px; border-radius:3px; border:1px solid var(--line);
+              color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
+  .tag.open{color:var(--idle);border-color:#5a4326} .tag.merged{color:var(--working);border-color:#245c3c}
+  .tag.ready{color:var(--working);border-color:#245c3c} .tag.dispatched{color:var(--codex);border-color:#2c4a7a}
+  .tag.failed{color:var(--stalled);border-color:#5c2727} .tag.completed{color:var(--faint)}
+  .row .t2 { color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row .n { color:var(--ink); font-variant-numeric:tabular-nums; }
+
+  /* An agent holding up what it made. */
+  .arts { display:flex; flex-wrap:wrap; gap:6px; margin-top:7px; }
+  .art { display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:4px;
+         border:1px solid #2f4a3a; background:#122019; color:var(--working);
+         font-size:11px; cursor:pointer; }
+  .art:hover { background:#183024; }
+  .art .sz { color:var(--faint); }
+
+  /* Reader for the artifact you clicked. */
+  #reader { position:fixed; inset:0; background:rgba(6,8,10,.86); display:none; z-index:50;
+            padding:5vh 6vw; }
+  #reader.on { display:block; }
+  #reader .sheet { background:#0f1318; border:1px solid var(--line); border-radius:10px;
+                   height:90vh; display:flex; flex-direction:column; }
+  #reader .bar { padding:10px 14px; border-bottom:1px solid var(--line); display:flex; gap:12px;
+                 align-items:center; }
+  #reader .bar b { font-size:13px; }
+  #reader .bar button { margin-left:auto; background:#1c222a; color:var(--ink);
+                        border:1px solid var(--line); border-radius:6px; padding:4px 12px; cursor:pointer; }
+  #reader pre { margin:0; padding:16px 18px; overflow:auto; flex:1;
+                white-space:pre-wrap; word-break:break-word; color:#cfd8e3; font-size:12.5px; line-height:1.6; }
+
+  /* Presentation mode: for a second monitor or an OBS capture. */
+  body.present { font-size:16px; }
+  body.present header .totals { gap:22px; }
+  body.present main { grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); }
+  body.present label, body.present #stamp { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fleet</h1>
+  <div class="totals" id="totals"></div>
+  <div class="spacer"></div>
+  <label><input type="checkbox" id="showEmpty"> show empty rooms</label>
+  <label><input type="checkbox" id="present"> present</label>
+  <span id="stamp">—</span>
+</header>
+<div id="warnings"></div>
+<div class="boards">
+  <section class="board"><h3>Waiting on review</h3><div class="rows" id="prs"></div></section>
+  <section class="board"><h3>Task board</h3><div class="rows" id="tasks"></div></section>
+</div>
+<main id="floor"><div class="empty-state">connecting…</div></main>
+<div id="reader"><div class="sheet">
+  <div class="bar"><b id="rtitle"></b><span id="rmeta" class="pr"></span><button onclick="closeReader()">close</button></div>
+  <pre id="rbody"></pre>
+</div></div>
+
+<script>
+// The renderer. It consumes GET /api/fleet and nothing else - swap everything below
+// for a different look without touching the server or the model.
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const STATES = ["working","stalled","idle","empty"];
+
+const showEmpty = $("showEmpty");
+showEmpty.checked = localStorage.getItem("fleet.showEmpty") === "1";
+showEmpty.onchange = () => { localStorage.setItem("fleet.showEmpty", showEmpty.checked ? "1":"0"); render(last); };
+
+function ago(s) {
+  if (s == null) return "";
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s/60) + "m";
+  if (s < 86400) return Math.floor(s/3600) + "h";
+  return Math.floor(s/86400) + "d";
+}
+
+function agentEl(p) {
+  const kind = ["claude","codex","grok"].includes(p.kind) ? p.kind : "agent";
+  return `<span class="agent ${kind}"><i class="chip"></i>${esc(p.kind)}<span class="st">${esc(p.state)}</span></span>`;
+}
+
+function bytes(n){ return n<1024 ? n+"B" : n<1048576 ? (n/1024).toFixed(0)+"K" : (n/1048576).toFixed(1)+"M"; }
+
+// The agent holding up what it produced. Clicking opens the real file.
+function artEl(a) {
+  return `<span class="art" onclick="openArtifact('${esc(a.path)}','${esc(a.name)}',${a.bytes})">
+    ${esc(a.name)}<span class="sz">${bytes(a.bytes)}</span></span>`;
+}
+
+function roomEl(r) {
+  const pr = r.pr ? `<span class="pr ${esc(r.pr_state)}">#${r.pr} ${esc(r.pr_state||"")}</span>` : "";
+  const who = r.occupants.length ? `<div class="who">${r.occupants.map(agentEl).join("")}</div>` : "";
+  // One line of what is happening beats four of metadata.
+  const busy = r.occupants.find(p => p.doing);
+  const doing = busy ? `<div class="doing">${esc(busy.doing)}</div>` : "";
+  const spoke = r.occupants.find(p => p.said);
+  const said = (!busy && spoke) ? `<div class="said">“${esc(spoke.said)}”</div>` : "";
+  const idle = r.idle_seconds != null ? `<span class="pr">${ago(r.idle_seconds)}</span>` : "";
+  const arts = r.artifacts?.length ? `<div class="arts">${r.artifacts.map(artEl).join("")}</div>` : "";
+  return `<div class="room ${r.state}">
+    <div class="room-top"><span class="name">${esc(r.name)}</span>${pr || idle}</div>
+    ${who}${doing}${said}${arts}
+  </div>`;
+}
+
+function buildingEl(b) {
+  const rooms = b.rooms.filter(r => showEmpty.checked || r.state !== "empty");
+  if (!rooms.length) return "";
+  const live = b.counts.working + b.counts.stalled;
+  return `<section class="building">
+    <h2><span class="dot ${b.counts.stalled ? "stalled" : live ? "working" : "idle"} ${live?"pulse":""}"></span>
+        ${esc(b.repo)}<span class="count">${rooms.length} room${rooms.length>1?"s":""}</span></h2>
+    ${rooms.map(roomEl).join("")}
+  </section>`;
+}
+
+const present = $("present");
+present.checked = localStorage.getItem("fleet.present") === "1";
+document.body.classList.toggle("present", present.checked);
+present.onchange = () => {
+  localStorage.setItem("fleet.present", present.checked ? "1":"0");
+  document.body.classList.toggle("present", present.checked);
+};
+
+// Reading what an agent just produced, without leaving the floor.
+async function openArtifact(path, name, size) {
+  $("rtitle").textContent = name;
+  $("rmeta").textContent = path;
+  $("rbody").textContent = "loading…";
+  $("reader").classList.add("on");
+  try {
+    const res = await fetch("/api/artifact?path=" + encodeURIComponent(path));
+    $("rbody").textContent = await res.text();
+  } catch (e) { $("rbody").textContent = "could not read: " + e; }
+}
+function closeReader(){ $("reader").classList.remove("on"); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeReader(); });
+$("reader").addEventListener("click", e => { if (e.target.id === "reader") closeReader(); });
+
+let last = null;
+function render(f) {
+  if (!f) return;
+  last = f;
+  if (!f.ok) {
+    $("floor").innerHTML = `<div class="empty-state">fleet unavailable — ${esc(f.error)}<br><small>${esc(f.detail||"")}</small></div>`;
+    return;
+  }
+  $("totals").innerHTML = STATES
+    .map(s => `<span class="t"><i class="dot ${s}"></i>${s} <b>${f.totals[s] ?? 0}</b></span>`).join("")
+    + `<span class="t">PRs open <b>${f.totals.prs_open ?? 0}</b></span>`
+    + `<span class="t">artifacts <b>${f.totals.artifacts ?? 0}</b></span>`;
+
+  const notes = [...(f.warnings||[])];
+  // A capped view must never read as the whole fleet.
+  if (f.truncated) notes.push(`showing ${f.truncated.returned} of ${f.truncated.total} worktrees`);
+  $("warnings").innerHTML = notes.length ? `<div class="warn">${notes.map(esc).join(" · ")}</div>` : "";
+
+  // Whiteboard: what a human still has to look at.
+  $("prs").innerHTML = (f.board||[]).length
+    ? f.board.map(p => `<div class="row"><span class="tag ${esc(p.state)}">${esc(p.state)}</span>
+        <span class="n">#${p.number}</span><span class="t2">${esc(p.repo)} · ${esc(p.room)}</span></div>`).join("")
+    : `<div class="row"><span class="t2">nothing waiting</span></div>`;
+
+  // Task board, live work first - a finished task is history, not a queue.
+  const rank = {dispatched:0, running:0, ready:1, blocked:2, failed:3, completed:4};
+  const tasks = [...(f.tasks||[])].sort((a,b)=>(rank[a.status]??5)-(rank[b.status]??5)).slice(0,40);
+  $("tasks").innerHTML = tasks.length
+    ? tasks.map(t => `<div class="row"><span class="tag ${esc(t.status)}">${esc(t.status)}</span>
+        <span class="t2">${esc(t.title)}</span></div>`).join("")
+    : `<div class="row"><span class="t2">no tasks</span></div>`;
+
+  const html = f.buildings.map(buildingEl).join("");
+  $("floor").innerHTML = html || `<div class="empty-state">no occupied rooms — everything is quiet</div>`;
+  $("stamp").textContent = new Date(f.generated_at * 1000).toLocaleTimeString();
+}
+
+async function poll() {
+  try { render(await (await fetch("/api/fleet")).json()); }
+  catch (e) { $("stamp").textContent = "offline"; }
+}
+poll();
+setInterval(poll, 5000);
+</script>
+</body>
+</html>
