@@ -77,7 +77,21 @@ def _split_doing(doing: Optional[str]) -> tuple[Optional[str], str]:
 
 
 def _soul_index(fleet: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """Stable identity per occupant, matching the renderer's own id scheme."""
+    """Stable identity per occupant, matching the renderer's own id scheme.
+
+    The positional `i` is a latent bug, not a live one, and I left it alone deliberately.
+    A soul's key moves if occupant order moves, which would read as a vanish plus an
+    appear. Measured against the running fleet: of 105 rooms, 100 hold zero or one
+    occupant and cannot be affected at all; the 5 that hold more kept their order across
+    every sample taken over ~40s. Four of those five hold occupants of a single kind, so
+    even a swap produces the same key.
+
+    What would bite is a departure from the MIDDLE of a list - everyone after it shifts
+    up one and every one of them reads as vanished-and-reappeared. That is real, and the
+    fix is to key on the agent's own id rather than its position, which means surfacing
+    that id from model.py. model.py is not this PR's to change, and a rushed positional
+    workaround here would be worse than the honest bug. Worth its own PR.
+    """
     index: Dict[str, Dict[str, Any]] = {}
     for building in fleet.get("buildings") or []:
         for room in building.get("rooms") or []:
