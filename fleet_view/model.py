@@ -120,6 +120,37 @@ def _room_state(worktree: Dict[str, Any], stalled_handles: set[str]) -> str:
     return IDLE
 
 
+_repo_org_cache: Dict[str, Dict[str, str]] = {}
+
+
+def _repo_orgs(refresh: bool = False) -> Dict[str, Dict[str, str]]:
+    """repoId -> {org, slug, host}, from each repo's git remote.
+
+    Grouping by repo name alone scatters one organisation across the floor: `mvp`,
+    `conduit` and `fyx` read as three unrelated places when they are one company's
+    work. The remote already knows better - github.com/<org>/<name> - so use it.
+    """
+    if _repo_org_cache and not refresh:
+        return _repo_org_cache
+
+    listed = orca._run(["repo", "list", "--json"])
+    if not listed.get("ok"):
+        return _repo_org_cache
+
+    for repo in (((listed.get("data") or {}).get("result")) or {}).get("repos") or []:
+        key = ((repo.get("gitRemoteIdentity") or {}).get("canonicalKey")) or ""
+        parts = key.split("/")
+        if len(parts) >= 3:
+            host, org, slug = parts[0], parts[1], "/".join(parts[2:])
+        else:
+            host, org, slug = "", "", repo.get("displayName") or ""
+        _repo_org_cache[repo.get("id") or ""] = {
+            "org": org or "unaffiliated", "slug": slug, "host": host,
+            "name": repo.get("displayName") or slug,
+        }
+    return _repo_org_cache
+
+
 def build_fleet(limit: int = 200, stall_after_seconds: int = STALL_AFTER_SECONDS) -> Dict[str, Any]:
     """Build the fleet model. Never raises: a dashboard that crashes shows nothing."""
     errors: List[str] = []
@@ -149,9 +180,12 @@ def build_fleet(limit: int = 200, stall_after_seconds: int = STALL_AFTER_SECONDS
     else:
         errors.append("stall detection unavailable - rooms may show working when quiet")
 
+    orgs_by_repo = _repo_orgs()
+
     buildings: Dict[str, Dict[str, Any]] = {}
     for wt in worktrees:
         repo = wt.get("repo") or wt.get("workspaceKind") or "unknown"
+        ident = orgs_by_repo.get(wt.get("repoId") or "", {})
         room = {
             "id": wt.get("worktreeId"),
             "name": wt.get("displayName") or (wt.get("path") or "").rsplit("/", 1)[-1],
@@ -168,7 +202,12 @@ def build_fleet(limit: int = 200, stall_after_seconds: int = STALL_AFTER_SECONDS
             "is_main": bool(wt.get("isMainWorktree")),
             "artifacts": [a for p in _occupants(wt) for a in p["artifacts"]],
         }
-        buildings.setdefault(repo, {"repo": repo, "rooms": []})["rooms"].append(room)
+        buildings.setdefault(repo, {
+            "repo": repo,
+            "org": ident.get("org") or "unaffiliated",
+            "host": ident.get("host") or "",
+            "rooms": [],
+        })["rooms"].append(room)
 
     # Busiest repos first, and within a repo the rooms that need attention first.
     order = {STALLED: 0, WORKING: 1, IDLE: 2, EMPTY: 3}
@@ -191,6 +230,20 @@ def build_fleet(limit: int = 200, stall_after_seconds: int = STALL_AFTER_SECONDS
     )
 
     rooms = [r for b in ordered for r in b["rooms"]]
+
+    # Districts: repos that belong to the same organisation, so one company's work
+    # reads as one place instead of scattering across the floor by repo name.
+    districts: Dict[str, Dict[str, Any]] = {}
+    for b in ordered:
+        d = districts.setdefault(b["org"], {"org": b["org"], "repos": [], "counts": {
+            WORKING: 0, STALLED: 0, IDLE: 0, EMPTY: 0}})
+        d["repos"].append(b["repo"])
+        for state, n in b["counts"].items():
+            d["counts"][state] += n
+    district_list = sorted(
+        districts.values(),
+        key=lambda d: (-d["counts"][STALLED], -d["counts"][WORKING], -d["counts"][IDLE], d["org"].lower()),
+    )
 
     # WHITEBOARD: what is waiting on a human. Built from the PRs Orca already tracks,
     # so it costs nothing extra and cannot disagree with the rooms beside it.
@@ -219,6 +272,7 @@ def build_fleet(limit: int = 200, stall_after_seconds: int = STALL_AFTER_SECONDS
     artifacts.sort(key=lambda a: a["age_seconds"])
 
     return {
+        "districts": district_list,
         "board": board,
         "tasks": tasks,
         "artifacts": artifacts,
@@ -229,6 +283,7 @@ def build_fleet(limit: int = 200, stall_after_seconds: int = STALL_AFTER_SECONDS
             "prs_open": sum(1 for p in board if p["state"] == "open"),
             "tasks_live": sum(1 for t in tasks if t["status"] in ("dispatched", "running", "ready")),
             "artifacts": len(artifacts),
+            "orgs": len(district_list),
             "repos": len(ordered),
             "rooms": len(rooms),
             "ghosts": sum(1 for r in rooms for p in r["occupants"] if p.get("presence") == "ghost"),
