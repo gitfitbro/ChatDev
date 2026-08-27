@@ -40,6 +40,21 @@ vars:
     file:line is worse than silence, because the whole point of a citation is that someone
     downstream can trust it without re-checking.
 
+
+    STAY INSIDE THE DIFF. The record node listed CHANGED FILES. That list is the review.
+
+    A file not on that list is not under review, however interesting it looks. Reviewing a
+    repository instead of a change is the most expensive way to be useless here: the findings
+    are about code nobody is asking about, and they crowd out the ones that are. Worse, they
+    read as if they are about the change, and someone acts on them.
+
+    Before you write any finding, check its file against CHANGED FILES. If it is not there:
+    do not spend a finding on it. Put one line under OUT OF SCOPE naming the file and what
+    you noticed, and move on.
+
+    You may READ anything in the repository - you often must, to know whether a change fits
+    its surroundings or breaks a caller. Reading widely and reporting narrowly is the job.
+
     Severity, used consistently:
       BLOCKER  - ships a defect, a security hole, or a false public claim
       MAJOR    - will cause real pain but does not block the merge
@@ -140,7 +155,10 @@ graph:
           sequence that triggers it. If you can express the trigger as a command or a test,
           write it out - a reproducible finding is worth ten described ones.
 
-          FINDINGS: numbered, severity-ordered, or "none".
+          FINDINGS: numbered, severity-ordered, or "none". Every one cites a file from
+          CHANGED FILES.
+          OUT OF SCOPE: things you noticed in files the change did not touch, one line each,
+          or "none". These are not findings and must not be ranked among them.
           COULD NOT CHECK: what you were unable to verify and why. Never leave this implicit.
         base_url: ${CREW_URL}
         api_key: ${CREW_KEY}
@@ -281,7 +299,17 @@ graph:
           Your judgement is exercised in what you merge, what you rank, and what you cut.
 
           Method:
-            0. VERIFY EVERY CITATION BEFORE YOU CARRY IT FORWARD. Open each cited file:line
+            0a. COPY THE RECORD FIRST. Before anything else, find the record node's
+               "PINNED SHA:" and "BASE:" lines in your input and write them out verbatim as
+               the first thing in your report. They are in your input. Writing "not provided"
+               while they sit there is a failure, not a caveat - it detaches the verdict from
+               the revision it judges, which is the one thing that makes a verdict usable.
+            0b. DROP EVERY FINDING OUTSIDE THE DIFF. Check each finding's file against the
+               record's CHANGED FILES. A finding about a file the change did not touch is out
+               of scope by construction - move it to VOIDED with the reason "outside the
+               diff". A reviewer being right about unrelated code is still wrong about this
+               pull request.
+            0c. VERIFY EVERY CITATION BEFORE YOU CARRY IT FORWARD. Open each cited file:line
                and check the code says what the reviewer claims. A reviewer citing import
                statements as error handling, or describing a `raise` that does not exist, has
                hallucinated - DROP the finding and record it under VOIDED. This step is not
