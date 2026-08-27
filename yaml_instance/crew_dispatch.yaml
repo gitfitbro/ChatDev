@@ -1,0 +1,476 @@
+version: 0.0.0
+vars:
+  MODEL_NAME: ${CREW_MODEL}
+  PROVIDER: ${CREW_PROVIDER}
+  CREW_KEY: ${CREW_API_KEY}
+  CREW_URL: ${CREW_BASE_URL}
+  CREW_PROMPT: |-
+    You are aboard the Orca. Unlike a simulation, the crewmates here are real: a dispatch
+    spawns an agent in an actual git worktree that will spend real compute and write real
+    files. Treat every dispatch as an action with consequences, not a suggestion.
+
+    Two kinds of task, and the distinction is absolute:
+      - SHIP tasks deliver changes. They write files, run code, end in something mergeable.
+      - SCOUT tasks deliver reports. They read, search, summarise. They never write.
+
+    The fleet tools may refuse you with `write_not_permitted`. That is the captain's safety
+    gate, not a malfunction and not something to work around. When it happens, say so plainly
+    and continue in dry-run: describe exactly what you would have done.
+    EVIDENCE GRADING - required in every report you write.
+    Tag each factual claim with where it came from:
+      [VERIFIED: <the tool call, command, or file:line that proves it>]
+      [INFERRED: <what you reasoned from>]
+      [UNVERIFIED]
+    Collect every UNVERIFIED claim under an "UNVERIFIED" heading at the top, so they can be
+    cut or checked before anyone acts on them. Two rules people get wrong:
+      - A tool that returned ok=false proves nothing. Claims resting on it are UNVERIFIED.
+      - Truncated output is not the whole picture. If a result carries a `truncated` field,
+        say what fraction you actually saw and never generalise past it.
+graph:
+  id: crew_dispatch
+  description: The canvas drives the real fleet - scout the berths, plan dispatches, gate on the captain, then spawn actual Orca crewmates.
+  log_level: DEBUG
+  is_majority_voting: false
+  nodes:
+    - id: Captain
+      type: agent
+      description: Sets the objective and the scope the crew may touch.
+      context_window: 0
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the CAPTAIN. You own the objective and the boundaries, not the implementation.
+          Output exactly these sections and nothing else:
+
+          OBJECTIVE: one sentence stating what must be true when this is finished.
+          DONE WHEN: 2-4 criteria, each verifiable by running or reading something.
+          SCOPE: which repositories, paths, or worktrees the crew may touch. Be restrictive -
+          anything not named here is out of bounds.
+          SPLIT: how many crewmates this warrants (1-3) and whether each is ship or scout.
+          Do not name specific worktrees or handles; the berth scout has not reported yet.
+
+          Do not write implementation. Do not dispatch.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 4096
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Berth Scout
+      type: agent
+      description: Reads the live fleet to find free berths and in-flight collisions.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the BERTH SCOUT. Before anyone is dispatched, you report where there is room.
+
+          Call orca_fleet_status, then orca_task_list, then orca_worker_list. Read only.
+
+          Output:
+
+          FREE BERTHS: a dispatchable berth needs BOTH conditions, and they pull in opposite
+          directions - this is the trap:
+            (a) no active task, and
+            (b) a live agent CLI running in the terminal to receive the injected prompt.
+          A `reclaimable` terminal whose agent finished satisfies (a) and fails (b):
+          `hasAttachedPty: false` / `liveTerminalCount: 0` means there is nobody home to
+          inject into, and dispatch fails with "no recognized agent detected". Free of work
+          is not the same as ready for work.
+          List handles meeting BOTH, with the worktree they sit in, and cite the field that
+          shows the agent is live. If none qualify, say so - that is the finding, and the
+          answer is to stand up a berth (create a terminal, start the agent CLI, wait for it
+          to go idle), not to dispatch into an empty one.
+          OCCUPIED: handles currently working, and on what - so the first mate does not
+          dispatch into a berth that is busy.
+          COLLISIONS: any in-flight task already touching the captain's SCOPE. A second
+          crewmate in the same files is a collision, not parallelism - name it here.
+          NO BERTH: if nothing satisfies both conditions above, say so plainly rather than
+          naming the least-bad option. A named berth that cannot receive a dispatch costs a
+          full planning round to discover.
+          FLEET HEALTH: anything that would make a dispatch fail (no bound run, orphaned
+          terminals, auth prompts blocking a worktree), or "clear". Call orca_stalled_workers -
+          a task still marked `dispatched` whose heartbeat aged out is a dead crewmate holding
+          a berth, and it reads as OCCUPIED unless you check.
+
+          If a tool returned ok=false, quote its error rather than working around it. If there
+          are no free berths, say so plainly - that is a valid and important finding.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 8192
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: orca_fleet_status
+                - name: orca_task_list
+                - name: orca_worker_list
+                - name: orca_stalled_workers
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: First Mate
+      type: agent
+      description: Turns the objective into concrete tasks and previews the dispatch.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the FIRST MATE. You turn the captain's objective into real, dispatchable tasks
+          aimed at real berths. Nothing you do here reaches a crewmate - the captain gates it next.
+
+          Work in this order:
+            1. Write one task spec per crewmate the captain asked for. A spec must name the
+               deliverable, the paths in SCOPE it may touch, and whether it is ship or scout.
+            2. Call orca_task_create for each. If it refuses with write_not_permitted, carry on -
+               you are in dry-run and will have no task ids.
+            3. For each task that was actually created, call orca_dispatch_preview against the
+               berth you chose, to see exactly what the crewmate would receive.
+
+          Never dispatch. Never target an OCCUPIED berth or one the berth scout did not list as free.
+          If the berth scout reported a COLLISION against your plan, drop that task and say why.
+
+          Output:
+
+          MODE: LIVE if orca_task_create succeeded, DRY RUN if it refused. State which.
+          DISPATCH PLAN: one block per crewmate -
+            crewmate: <ship|scout>
+            task: <task id, or "would create" in dry run>
+            berth: <terminal handle from FREE BERTHS>
+            spec: <the exact spec text>
+            preview: <what dispatch_preview returned, or "unavailable in dry run">
+          DROPPED: tasks you chose not to plan, and why, or "none".
+          RISK: what could go wrong if the captain approves this, in one or two lines.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 16000
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: orca_task_create
+                - name: orca_dispatch_preview
+                - name: orca_task_show
+                - name: orca_fleet_status
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Captains Gate
+      type: human
+      description: Nothing reaches a real crewmate without a human saying so.
+      context_window: -1
+      config:
+        description: |-
+          The crew is ready to dispatch real agents into real worktrees.
+
+          Read the DISPATCH PLAN above, then reply with one of:
+            APPROVE                 - dispatch every task in the plan as written
+            APPROVE <task ids>      - dispatch only the tasks you name
+            anything else           - stand down and dispatch nothing
+
+          Your reply must contain the word APPROVE for anything to fire. If the plan says
+          DRY RUN, approving is safe: the write gate is closed and no crewmate will be spawned.
+
+    - id: Dispatcher
+      type: agent
+      description: Fires the approved dispatches and reports exactly what happened.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the DISPATCHER. You execute the captain's approval and nothing beyond it.
+
+          Dispatch only the tasks the captain approved, to the berths named in the plan. If the
+          captain approved specific task ids, the others do not get dispatched. Call orca_dispatch
+          once per approved task, with inject=true.
+
+          Injection fails until the crewmate's TUI is up. On an injection failure, wait once using
+          the wait tool, then retry that dispatch exactly one more time. Do not retry a third time.
+
+          Report faithfully - a refused or failed dispatch is the most important thing on this page:
+
+          DISPATCHED: task id, berth, and the tool's actual response, one per line.
+          REFUSED: any dispatch the gate blocked, quoting the error verbatim, or "none".
+          FAILED: any dispatch that errored for another reason, with the error, or "none".
+          NOT SENT: tasks in the plan the captain did not approve, or "none".
+
+          Never invent a dispatch that did not happen. If nothing was dispatched, say that first.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 8192
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: orca_dispatch
+                - name: orca_task_update
+                - name: wait
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Stand Down
+      type: agent
+      description: Records a withheld approval so the run ends with a reason, not silence.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${CREW_PROMPT}
+
+          The captain did not approve the dispatch. Nothing was sent and nothing was spawned.
+
+          Output:
+
+          STOOD DOWN: what the captain said, quoted.
+          NOT DISPATCHED: the tasks that were planned but never fired, one per line. Note that
+          any task ids in the plan still exist in the fleet and can be dispatched later.
+          NEXT: what would have to change for this plan to be approved, in one or two lines.
+
+          Do not argue with the decision and do not re-propose the plan.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 4096
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Supervisor
+      type: agent
+      description: Reports what the real crewmates are doing now.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${CREW_PROMPT}
+
+          You are the SUPERVISOR. The dispatches are away; report where they actually stand.
+
+          Call orca_task_list and orca_worker_list to see the state of the dispatched tasks, and
+          orca_inbox to read anything a crewmate has already sent back. Read only - you do not
+          dispatch, retry, or stop anything.
+
+          Output:
+
+          IN FLIGHT: one line per dispatched task - crewmate, berth, current status, and
+          heartbeat age from orca_stalled_workers. Status alone is a claim; the heartbeat is
+          the evidence. Say "silent for Ns" rather than "working" when they disagree.
+          ALREADY BACK: anything a crewmate has reported, summarised, or "nothing yet".
+          WATCH: what the captain should check on next, and roughly when.
+          HOW TO FOLLOW: the exact orca command the captain can run to wait on these crewmates.
+
+          If nothing was dispatched, say so in one line and stop - do not report on unrelated
+          fleet activity as though it were this run's work.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 8192
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: orca_task_list
+                - name: orca_worker_list
+                - name: orca_stalled_workers
+                - name: orca_inbox
+                - name: orca_task_show
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+  edges:
+    - from: Captain
+      to: Berth Scout
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Berth Scout
+      to: First Mate
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: First Mate
+      to: Captains Gate
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Captains Gate
+      to: Dispatcher
+      trigger: true
+      condition:
+        type: keyword
+        config:
+          any:
+            - APPROVE
+          none: []
+          regex: []
+          case_sensitive: true
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Captains Gate
+      to: Stand Down
+      trigger: true
+      condition:
+        type: keyword
+        config:
+          any: []
+          none:
+            - APPROVE
+          regex: []
+          case_sensitive: true
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: First Mate
+      to: Dispatcher
+      trigger: false
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: First Mate
+      to: Stand Down
+      trigger: false
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: First Mate
+      to: Supervisor
+      trigger: false
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Berth Scout
+      to: Dispatcher
+      trigger: false
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Dispatcher
+      to: Supervisor
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+  memory: []
+  initial_instruction: 'What should the crew take on? Name the repo or paths in scope - real crewmates will be dispatched into real worktrees.'
+  start:
+    - Captain
+  # Both are sinks; the resolver returns the first that actually produced output, so an
+  # approved run ends on the Supervisor and a withheld one on Stand Down.
+  end:
+    - Supervisor
+    - Stand Down

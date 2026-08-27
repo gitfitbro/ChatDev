@@ -12,6 +12,7 @@ authors = [{ name = "DevAll Team" }]
 dependencies = [
     "pyyaml",
     "openai",
+    "anthropic",
     "tenacity",
     "mcp",
     "fastmcp",

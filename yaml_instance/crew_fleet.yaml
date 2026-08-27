@@ -1,0 +1,206 @@
+version: 0.0.0
+vars:
+  MODEL_NAME: ${CREW_MODEL}
+  PROVIDER: ${CREW_PROVIDER}
+  CREW_KEY: ${CREW_API_KEY}
+  CREW_URL: ${CREW_BASE_URL}
+  EVIDENCE: |-
+    EVIDENCE GRADING - required in every report you write.
+    Tag each factual claim with where it came from:
+      [VERIFIED: <the tool call, command, or file:line that proves it>]
+      [INFERRED: <what you reasoned from>]
+      [UNVERIFIED]
+    Collect every UNVERIFIED claim under an "UNVERIFIED" heading at the top, so they can be
+    cut or checked before anyone acts on them. Two rules people get wrong:
+      - A tool that returned ok=false proves nothing. Claims resting on it are UNVERIFIED.
+      - Truncated output is not the whole picture. If a result carries a `truncated` field,
+        say what fraction you actually saw and never generalise past it.
+graph:
+  id: crew_fleet
+  description: Live bearings on the real Orca fleet - lookout inventories it, navigator finds the trouble, first mate reports.
+  log_level: DEBUG
+  is_majority_voting: false
+  nodes:
+    - id: Lookout
+      type: agent
+      description: Inventories the live Orca fleet via the orca CLI bridge.
+      context_window: 0
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${EVIDENCE}
+
+          You are the LOOKOUT. You report what is actually out there, nothing more.
+
+          Call every one of these tools once, in this order:
+            1. orca_fleet_status  - which worktrees exist and what is running in each
+            2. orca_task_list     - the orchestration tasks
+            3. orca_worker_list   - the supervised crewmate terminals
+
+          Then transcribe what came back as a plain inventory:
+
+          WORKTREES: one line each - path, branch, and what is running there.
+          TASKS: one line each - id, status, and a short form of the spec.
+          WORKERS: one line each - handle, terminal state, and the task it owns.
+
+          RECONCILE THESE TWO - they do not cover the same ground. orca_task_list is scoped
+          to one run; orca_worker_list spans every run this fleet has ever had. So a worker
+          can name a task id that is not in the task list at all, because it belongs to an
+          older run. Those ids are real, which makes them more dangerous than invented ones.
+          Split them explicitly:
+            THIS RUN: worker task ids that also appear in the task list, with that status.
+            EARLIER RUNS: worker task ids with no match in the task list. Not current work.
+          TOOL FAILURES: any tool that returned ok=false, with its error. Write "none" if all succeeded.
+
+          Report only what the tools returned. If a field is missing from the output, write
+          "unknown" - do not infer it, and do not describe a fleet you did not observe.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 8192
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: orca_fleet_status
+                - name: orca_task_list
+                - name: orca_worker_list
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Navigator
+      type: agent
+      description: Finds the trouble in the inventory.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${EVIDENCE}
+
+          You are the NAVIGATOR. You read the lookout's inventory and find what is wrong with it.
+
+          You may pull one extra detail per suspect task with orca_task_show, and read pending
+          crewmate messages with orca_inbox. You cannot change fleet state and should not try.
+
+          Look specifically for:
+            - a task in a running state with no live worker terminal behind it (a ghost task)
+            - a worker still holding a terminal for a task from an EARLIER RUN - that is a
+              leak, not work in progress, and it is the most common thing misread as active
+            - a worker terminal alive with no task (an orphaned terminal burning resources)
+            - a task that has been pending while others moved (a stall)
+            - a crewmate whose heartbeat has aged out - call orca_stalled_workers rather
+              than eyeballing timestamps. A task sits in `dispatched` forever after its
+              agent dies; the heartbeat is what tells you whether anyone is still home.
+            - a worktree with no task and no worker (leftover clutter)
+
+          Output:
+
+          ANOMALIES: one line each - what is wrong, which id it concerns, and the evidence
+          from the inventory that shows it. Write "none" if the fleet is clean.
+          NEEDS A HUMAN: anything you cannot resolve by reading, or "none".
+
+          Do not invent anomalies to fill the section. A clean fleet is a valid finding.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 8192
+        tooling:
+          - type: function
+            config:
+              tools:
+                - name: orca_task_show
+                - name: orca_stalled_workers
+                - name: orca_inbox
+                - name: orca_run_list
+              timeout: null
+            prefix: ''
+        thinking: null
+        memories: []
+        retry: null
+
+    - id: Bearings
+      type: agent
+      description: The bearings report the captain reads.
+      context_window: -1
+      log_output: true
+      config:
+        name: ${MODEL_NAME}
+        provider: ${PROVIDER}
+        role: |-
+          ${EVIDENCE}
+
+          You are the FIRST MATE giving bearings. The captain has been away and wants to know
+          where the fleet stands in as few words as will do the job.
+
+          Output exactly:
+
+          BEARINGS: one sentence - how many crewmates are working, on what, and whether
+          anything is stuck.
+          IN FLIGHT: one line per active task. Every line MUST begin with a task id that the
+          lookout listed under THIS RUN with a live status (dispatched, running, ready). An id
+          that appears only in the worker list belongs to an earlier run - it is real, it is
+          not current, and reporting it as in flight is the specific mistake this section
+          exists to prevent. Those go under CLEAN UP as leaked terminals instead.
+          If you cannot name a qualifying id, the line does not belong here.
+
+          The tools the lookout called are not crewmates. orca_fleet_status, orca_task_list
+          and orca_worker_list are how the inventory was gathered; writing "Crewmate A:
+          reviewing worktrees" turns your own pipeline into imaginary agents. Every name you
+          write must appear verbatim in the inventory above.
+
+          If no task is active, write "none" - an idle fleet is a real and useful answer.
+          ATTENTION: what the captain must decide or unblock, most urgent first, or "none".
+          CLEAN UP: reclaimable terminals or stale worktrees worth clearing, or "none".
+
+          If the lookout reported tool failures, say so in BEARINGS rather than presenting a
+          partial picture as complete.
+        base_url: ${CREW_URL}
+        api_key: ${CREW_KEY}
+        params:
+          max_tokens: 4096
+        tooling: []
+        thinking: null
+        memories: []
+        retry: null
+
+  edges:
+    - from: Lookout
+      to: Navigator
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+    - from: Navigator
+      to: Bearings
+      trigger: true
+      condition:
+        type: function
+        config:
+          name: 'true'
+      carry_data: true
+      keep_message: true
+      clear_context: false
+      clear_kept_context: false
+      process: null
+      dynamic: null
+
+  memory: []
+  initial_instruction: 'Ask for bearings on the fleet, or name a run or worktree to focus on.'
+  start:
+    - Lookout
+  end: []
